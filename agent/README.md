@@ -103,7 +103,12 @@ We are the only maintainer; upstream is dormant. Practical notes:
   is the one part of the codebase where Python intuition actively misleads: Go has
   real parallelism and no GIL.
 * The compiler is the safety net. Wrong Go fails `go build` in seconds.
-* SQLite needs CGO (`CGO_ENABLED=1`), which the Dockerfile handles. Use the
-  Postgres or file store to avoid it.
+* **SQLite needs CGO, and this machine has no C compiler** — so `CGO_ENABLED=0`,
+  `go-sqlite3` compiles to a stub, and its store tests fail. Confirmed, not
+  theoretical. Use `STORE_DRIVER=file` locally; the Dockerfile sets
+  `CGO_ENABLED=1` and builds it properly.
+* **`go test -race` will not run here either** — the race detector also requires
+  cgo. Run it in Docker or WSL, or install a toolchain
+  (`winget install BrechtSanders.WinLibs.POSIX.UCRT`) and set `CGO_ENABLED=1`.
 * Score prompt changes with the harness in [`../eval`](../eval) before shipping
   them. "It felt better" is not evidence.

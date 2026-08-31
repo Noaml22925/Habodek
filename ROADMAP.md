@@ -44,6 +44,31 @@ Python side is now only the evaluation harness — 32 tests, ruff clean.
 
 **Not yet done:** nothing has been run end to end. No review has ever been produced.
 
+### Repository
+
+Pushed to `github.com/Noaml22925/Habodek` (`origin`), branch `main`.
+
+History is deliberately structured so the fork delta stays legible:
+
+```
+aa92c7f  Add the evaluation harness, and the project docs
+1a4254f  Make the fork ours: rename module, add attribution and docs
+4989776  Vendor gitlab-review-agent at ab50d4f (MIT)   <- pristine upstream
+a72f24a  Initial commit
+```
+
+Upstream was committed **untouched first**, so `git show 1a4254f` is exactly "what
+we changed". `upstream` is configured as a second remote for the same purpose,
+permanently:
+
+```bash
+git fetch upstream
+git diff upstream/main -- agent/internal/pkg/llm/openai.go
+```
+
+`.gitattributes` pins `eol=lf`. Without it a Windows checkout rewrites line endings
+on every file and those upstream diffs become unreadable noise.
+
 ---
 
 ## The big unblock: everything can be tested locally
