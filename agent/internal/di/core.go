@@ -3,15 +3,15 @@ package di
 import (
 	"github.com/samber/do/v2"
 
-	"github.com/antlss/gitlab-review-agent/internal/config"
-	"github.com/antlss/gitlab-review-agent/internal/core/agents/replier"
-	"github.com/antlss/gitlab-review-agent/internal/core/agents/reviewer"
-	"github.com/antlss/gitlab-review-agent/internal/core/feedback"
-	"github.com/antlss/gitlab-review-agent/internal/core/reply"
-	"github.com/antlss/gitlab-review-agent/internal/core/review"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/git"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/llm"
+	"habodek/internal/config"
+	"habodek/internal/core/agents/replier"
+	"habodek/internal/core/agents/reviewer"
+	"habodek/internal/core/feedback"
+	"habodek/internal/core/reply"
+	"habodek/internal/core/review"
+	"habodek/internal/domain"
+	"habodek/internal/pkg/git"
+	"habodek/internal/pkg/llm"
 )
 
 var CorePackage = do.Package(

@@ -15,7 +15,7 @@ import (
 
 	"log/slog"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 	gogit "github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"

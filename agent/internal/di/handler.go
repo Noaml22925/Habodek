@@ -3,15 +3,15 @@ package di
 import (
 	"github.com/samber/do/v2"
 
-	"github.com/antlss/gitlab-review-agent/internal/config"
-	"github.com/antlss/gitlab-review-agent/internal/core/feedback"
-	"github.com/antlss/gitlab-review-agent/internal/core/reply"
-	"github.com/antlss/gitlab-review-agent/internal/core/review"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
-	"github.com/antlss/gitlab-review-agent/internal/handler/cron"
-	"github.com/antlss/gitlab-review-agent/internal/handler/webhook"
-	"github.com/antlss/gitlab-review-agent/internal/handler/worker"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/queue"
+	"habodek/internal/config"
+	"habodek/internal/core/feedback"
+	"habodek/internal/core/reply"
+	"habodek/internal/core/review"
+	"habodek/internal/domain"
+	"habodek/internal/handler/cron"
+	"habodek/internal/handler/webhook"
+	"habodek/internal/handler/worker"
+	"habodek/internal/pkg/queue"
 )
 
 var HandlerPackage = do.Package(

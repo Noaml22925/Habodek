@@ -12,8 +12,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/queue"
+	"habodek/internal/domain"
+	"habodek/internal/pkg/queue"
 )
 
 type Handler struct {

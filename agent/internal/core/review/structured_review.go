@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/antlss/gitlab-review-agent/internal/core/prompt"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/tools"
+	"habodek/internal/core/prompt"
+	"habodek/internal/domain"
+	"habodek/internal/pkg/tools"
 )
 
 const (

@@ -3,12 +3,12 @@ package di
 import (
 	"github.com/samber/do/v2"
 
-	"github.com/antlss/gitlab-review-agent/internal/config"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/git"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/gitlab"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/queue"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/store"
+	"habodek/internal/config"
+	"habodek/internal/domain"
+	"habodek/internal/pkg/git"
+	"habodek/internal/pkg/gitlab"
+	"habodek/internal/pkg/queue"
+	"habodek/internal/pkg/store"
 )
 
 var InfraPackage = do.Package(

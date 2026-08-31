@@ -3,7 +3,7 @@ package review
 import (
 	"testing"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 )
 
 func TestParseDirectJSON(t *testing.T) {

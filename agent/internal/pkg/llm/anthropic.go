@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 )
 
 type AnthropicClient struct {

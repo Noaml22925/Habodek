@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 )
 
 type StaleJobRecoveryJob struct {

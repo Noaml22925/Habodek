@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 )
 
 type ParsedOutput struct {

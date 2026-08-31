@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/antlss/gitlab-review-agent/internal/core/prompt"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/core/prompt"
+	"habodek/internal/domain"
 )
 
 const (

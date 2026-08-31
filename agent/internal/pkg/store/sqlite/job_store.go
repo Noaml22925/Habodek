@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"

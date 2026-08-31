@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/git"
+	"habodek/internal/domain"
+	"habodek/internal/pkg/git"
 )
 
 type stubReviewRecordStore struct {

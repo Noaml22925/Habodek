@@ -1,7 +1,7 @@
 package reply
 
 import (
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 	"strings"
 )
 

@@ -4,7 +4,7 @@ import (
 	"cmp"
 	"slices"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 )
 
 type ReviewMode string

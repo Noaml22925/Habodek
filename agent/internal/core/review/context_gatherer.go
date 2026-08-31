@@ -9,8 +9,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/antlss/gitlab-review-agent/internal/core/prompt"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/core/prompt"
+	"habodek/internal/domain"
 )
 
 type ContextGatherer struct {

@@ -19,15 +19,15 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/semaphore"
 
-	"github.com/antlss/gitlab-review-agent/internal/config"
-	"github.com/antlss/gitlab-review-agent/internal/core/prompt"
-	"github.com/antlss/gitlab-review-agent/internal/core/review"
-	"github.com/antlss/gitlab-review-agent/internal/di"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/git"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/gitlab"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/logger"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/store"
+	"habodek/internal/config"
+	"habodek/internal/core/prompt"
+	"habodek/internal/core/review"
+	"habodek/internal/di"
+	"habodek/internal/domain"
+	"habodek/internal/pkg/git"
+	"habodek/internal/pkg/gitlab"
+	"habodek/internal/pkg/logger"
+	"habodek/internal/pkg/store"
 )
 
 func main() {

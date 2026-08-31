@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/antlss/gitlab-review-agent/internal/config"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/config"
+	"habodek/internal/domain"
 )
 
 // NewClient creates a single LLM client based on provider and model name.

@@ -1,4 +1,4 @@
-module github.com/antlss/gitlab-review-agent
+module habodek
 
 go 1.25.5
 

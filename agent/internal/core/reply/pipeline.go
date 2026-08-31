@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/antlss/gitlab-review-agent/internal/config"
-	"github.com/antlss/gitlab-review-agent/internal/core/agents/replier"
-	"github.com/antlss/gitlab-review-agent/internal/core/prompt"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/llm"
+	"habodek/internal/config"
+	"habodek/internal/core/agents/replier"
+	"habodek/internal/core/prompt"
+	"habodek/internal/domain"
+	"habodek/internal/pkg/llm"
 )
 
 type replyGenerator interface {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 )
 
 func TestParseExtractionOutputFromPrettyPrintedFence(t *testing.T) {

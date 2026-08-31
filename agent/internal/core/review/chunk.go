@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 )
 
 // ChunkFiles groups diff files by domain/directory and balances into chunks of

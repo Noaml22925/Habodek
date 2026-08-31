@@ -9,9 +9,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/antlss/gitlab-review-agent/internal/config"
-	"github.com/antlss/gitlab-review-agent/internal/core/agents/replier"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/config"
+	"habodek/internal/core/agents/replier"
+	"habodek/internal/domain"
 )
 
 type fakeReplyAgent struct {

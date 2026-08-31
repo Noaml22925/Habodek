@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/antlss/gitlab-review-agent/internal/config"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/store/file"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/store/postgres"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/store/sqlite"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/config"
+	"habodek/internal/pkg/store/file"
+	"habodek/internal/pkg/store/postgres"
+	"habodek/internal/pkg/store/sqlite"
+	"habodek/internal/domain"
 )
 
 // Stores aggregates all store instances and a Close function.

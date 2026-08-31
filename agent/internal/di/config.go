@@ -3,8 +3,8 @@ package di
 import (
 	"github.com/samber/do/v2"
 
-	"github.com/antlss/gitlab-review-agent/internal/config"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/logger"
+	"habodek/internal/config"
+	"habodek/internal/pkg/logger"
 )
 
 var ConfigPackage = do.Package(

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/antlss/gitlab-review-agent/internal/config"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/config"
+	"habodek/internal/domain"
 )
 
 // NoteAccumulator stores notes saved by the agent during a review session.

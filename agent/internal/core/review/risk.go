@@ -1,7 +1,7 @@
 package review
 
 import (
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 	"math"
 	"path/filepath"
 	"strings"

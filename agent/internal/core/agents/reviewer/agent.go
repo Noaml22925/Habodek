@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/antlss/gitlab-review-agent/internal/core/prompt"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/tools"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/core/prompt"
+	"habodek/internal/pkg/tools"
+	"habodek/internal/domain"
 )
 
 const (

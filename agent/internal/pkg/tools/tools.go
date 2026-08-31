@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 )
 
 // ─── read_file ──────────────────────────────────────────────────────────────────

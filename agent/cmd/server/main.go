@@ -15,13 +15,13 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/samber/do/v2"
 
-	"github.com/antlss/gitlab-review-agent/internal/config"
-	"github.com/antlss/gitlab-review-agent/internal/di"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
-	"github.com/antlss/gitlab-review-agent/internal/handler/cron"
-	"github.com/antlss/gitlab-review-agent/internal/handler/webhook"
-	"github.com/antlss/gitlab-review-agent/internal/handler/worker"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/queue"
+	"habodek/internal/config"
+	"habodek/internal/di"
+	"habodek/internal/domain"
+	"habodek/internal/handler/cron"
+	"habodek/internal/handler/webhook"
+	"habodek/internal/handler/worker"
+	"habodek/internal/pkg/queue"
 )
 
 func main() {

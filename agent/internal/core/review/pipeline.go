@@ -11,12 +11,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/antlss/gitlab-review-agent/internal/config"
-	"github.com/antlss/gitlab-review-agent/internal/core/agents/reviewer"
-	"github.com/antlss/gitlab-review-agent/internal/core/prompt"
-	"github.com/antlss/gitlab-review-agent/internal/domain"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/git"
-	"github.com/antlss/gitlab-review-agent/internal/pkg/llm"
+	"habodek/internal/config"
+	"habodek/internal/core/agents/reviewer"
+	"habodek/internal/core/prompt"
+	"habodek/internal/domain"
+	"habodek/internal/pkg/git"
+	"habodek/internal/pkg/llm"
 )
 
 type Pipeline struct {

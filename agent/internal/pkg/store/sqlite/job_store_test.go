@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/antlss/gitlab-review-agent/internal/domain"
+	"habodek/internal/domain"
 )
 
 func TestReviewJobStoreExistsPendingOrCompletedIncludesPosting(t *testing.T) {

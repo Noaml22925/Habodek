@@ -1,0 +1,6 @@
+# Keep line endings stable so `git diff upstream/main` stays readable
+# on Windows checkouts.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary

@@ -1,144 +1,109 @@
-# 🤖 AI Review Agent
+# Habodek agent
 
-<div align="center">
-  <img src="https://img.shields.io/badge/go-1.25.5-00ADD8?style=for-the-badge&logo=go&logoColor=white" alt="Go Version">
-  <img src="https://img.shields.io/badge/GitLab-330F55?style=for-the-badge&logo=gitlab&logoColor=white" alt="GitLab">
-  <img src="https://img.shields.io/badge/LLM-OpenAI%20%7C%20Anthropic%20%7C%20Google-black?style=for-the-badge" alt="Multi-LLM">
-  <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License">
-</div>
+Fork of [gitlab-review-agent](https://github.com/antlss/gitlab-review-agent) (MIT).
+Provenance and our accumulated changes: [`NOTICE.md`](NOTICE.md).
+Upstream's own feature documentation is preserved at
+[`README.upstream.md`](README.upstream.md) and is still the best reference for
+options this file does not cover.
 
-<br/>
+## Pointing it at our LiteLLM gateway
 
-> **More than just a `.patch` reader.** AI Review Agent is an autonomous, context-aware code review assistant designed natively for GitLab Merge Requests. It clones your repository, reads the codebase, checks historical conventions, and engages in technical debates—just like a Senior Developer.
-
----
-
-## 🚀 Why AI Review Agent?
-
-Most open-source AI reviewers simply pipe your git diff into an LLM and spit out generic advice. **We do things differently:**
-
-- 🧠 **True Contextual Awareness:** We don't just read the diff. The agent is equipped with tools (`read_file`, `search_code`, `multi_diff`) to explore the actual codebase. If you modify a function signature, it can search where else it's used before commenting. No more "hallucinated" bugs.
-- ♻️ **Self-Improving Feedback Loop:** The system learns your project's conventions. A background Cron job consolidates historical AI reviews and human feedback into a tailored "Repository Best Practices" rulebook.
-- 🔀 **Robust Multi-LLM Routing:** Avoid vendor lock-in. Natively supports **OpenAI (GPT-4o)**, **Anthropic (Claude 3.7)**, and **Google (Gemini 2.0)** with load-balancing and fallback mechanisms. Mix and match models based on cost, rate limits, or language proficiency.
-- 💻 **Interactive Local CLI:** Don't want to spam your team with AI comments? Run the agent locally via CLI. It performs a dry-run review, displays the findings in your terminal, and lets you interactively select exactly which comments to push to GitLab.
-
----
-
-## 🔍 How It Works: The "Deep Dive" Review Flow
-
-1. **Trigger & Initialization**: A webhook catches a Merge Request event (create/update). The agent checks whether the MR carries the configured **review trigger label** (default: `ai-review`). If the label is present, a job is queued asynchronously and the specific repository config (frameworks, model overrides) is loaded. A manual CLI trigger skips the label check and always proceeds.
-2. **Smart Git Synchronization**: The agent acquires a lock and shallow-fetches the target branch. It calculates a smart **Base SHA** to only process _incremental_ new commits if the MR was reviewed previously, preventing noisy duplicate comments.
-3. **Risk Scoring & Parsing**: Modifed files are scored for risk. Highly modified or complex files are pre-loaded directly into the LLM context. Massive PRs (>150 files) are safely truncated and sampled by risk to protect your context window.
-4. **Context Gathering (The Secret Sauce)**: External data is fetched:
-   - **Repository Settings**: Known frameworks/languages.
-   - **Discussion History**: Previous unresolved AI comments (it can auto-resolve them if the developer fixed the code!).
-   - **Feedback Rules**: Historical lessons learned specific to this repo.
-5. **Agentic Code Analysis**: The LLM runs in an agentic loop. Over multiple iterations, it navigates the codebase using tools (`read_file`, `search_code`). It verifies its assumptions against real code before drafting a comment.
-6. **Publish & Auto-Resolution**: Validated, structured comments are pushed as inline GitLab discussions. If a developer modified lines overlapping with a _previous_ AI comment, the agent automatically recognizes the fix and resolves the old thread.
-7. **Reply Loop**: Developers can reply directly to the AI's thread in GitLab. A specialized `Replier Agent` wakes up, reads the thread history + surrounding code context, and continues the technical debate.
-
----
-
-## ⚡ Quick Start
-
-### Prerequisites
-
-- Go 1.25.5+
-- A GitLab instance (or gitlab.com)
-- Access Tokens: GitLab (Personal/Project Access Token) and at least one LLM Provider (OpenAI, Anthropic, Google).
-
-### Docker Installation (Recommended)
-
-The easiest way to get the agent running without managing Go environments is using Docker Compose.
+The OpenAI client here is hand-rolled `net/http` — a plain
+`POST {base}/chat/completions` with `Authorization: Bearer`, a standard `tools`
+array and standard `tool_calls` parsing. Any OpenAI-compatible endpoint works, so
+our gateway needs **no code change**, only configuration:
 
 ```bash
-git clone https://github.com/antlss/gitlab-review-agent.git
-cd gitlab-review-agent
-
-# Configure your environment
-cp .env.example .env
-# Edit .env to set your LLM tokens and GitLab credentials
-
-# Start the server in the background
-docker-compose up -d
+LLM_DEFAULT_PROVIDER=openai
+LLM_DEFAULT_MODEL=qwen3.6
+OPENAI_BASE_URL=https://litellm.internal/v1
+OPENAI_API_KEY=sk-...
 ```
 
-Your webhook server will be live at port `8080`. You can execute the interactive CLI directly inside the running container:
+Two things to know:
+
+* **Context window.** `resolveContextWindow` (`internal/pkg/llm/client.go`) looks
+  the model up in `defaultContextWindows` (`internal/config/config.go`) and falls
+  back to **128k** for anything unknown. That is correct for qwen3.6. For a model
+  with a larger window, add a line to that map or it silently under-uses context.
+* **`max_completion_tokens`.** `internal/pkg/llm/openai.go` sends the newer field
+  name. LiteLLM normally translates it; if a model rejects it, change that one
+  word to `max_tokens`.
+
+`OPENAI_API_KEYS` (plural) accepts a comma-separated list and load-balances across
+them. Per-repository model overrides are supported through repository settings, so
+different teams can run different models.
+
+## GitLab
 
 ```bash
-docker exec -it ai_review_agent ./cli review --project-id 123 --mr-id 45
+GITLAB_BASE_URL=https://gitlab.internal
+GITLAB_TOKEN=...              # group or project access token, api scope
+GITLAB_WEBHOOK_SECRET=...
+GITLAB_BOT_USER_ID=...        # the bot's own user id — the loop guard
 ```
 
-### Manual Installation (From Source)
+`GITLAB_BOT_USER_ID` matters: it is how the agent ignores its own notes. Get it
+wrong and it will reply to itself.
 
-```bash
-git clone https://github.com/antlss/gitlab-review-agent.git
-cd gitlab-review-agent
+Webhook: Merge request events + Comment events → `http://<host>:8080/webhook`.
 
-# Build the server and CLI binaries
-go build -o server ./cmd/server
-go build -o cli ./cmd/cli
+## Triggering
 
-# Configure your environment
-cp .env.example .env
+Reviews are **label-triggered**, not automatic on push — add `ai-review`
+(`REVIEW_TRIGGER_LABEL`) to an MR. This is the cost control: nothing runs unless
+somebody asks. The CLI bypasses the label check and always reviews.
+
+Replies are handled automatically: when a human comments in one of the agent's own
+threads, the replier agent wakes up with the thread history and surrounding code.
+Threads auto-resolve when modified lines overlap a prior comment.
+
+## Cost and size controls
+
+| Variable | Default | Effect |
+|---|---|---|
+| `REVIEW_MAX_FILES_BEFORE_SAMPLE` | 150 | Above this, sample rather than review everything |
+| `REVIEW_LARGE_PR_ACTION` | `sample` | `sample` or `block` |
+| `REVIEW_CHUNK_THRESHOLD` | 21 | File count that switches unified → chunked review |
+| `REVIEW_TRIAGE_THRESHOLD` | 81 | File count that switches chunked → triage |
+| `REVIEW_MAX_PARALLEL_CHUNKS` | 5 | Concurrency, and therefore burst token spend |
+| `REVIEW_MAX_FINDINGS` | — | Hard cap on comments posted per review |
+| `LLM_CONTEXT_COMPRESSION_THRESHOLD` | 0.55 | Fraction of context before compression |
+
+`REVIEW_MAX_FINDINGS` is the noise dial. Start it low. A reviewer that posts thirty
+threads on one MR gets muted within a fortnight, and a muted reviewer reviews
+nothing.
+
+## Where things are
+
+```
+cmd/server            webhook server
+cmd/cli               interactive dry-run review, and clone-all
+internal/config       every env var, and defaultContextWindows
+internal/pkg/llm      openai.go / anthropic.go / google.go, balancer, retry
+internal/pkg/tools    read_file, search_code, read_multi_file
+internal/pkg/gitlab   discussions, notes, ResolveDiscussion
+internal/core/prompt  THE PROMPTS — plain string constants, edit as text
+internal/core/review  pipeline, planner, risk scoring, chunking, output parsing
+internal/core/reply   intent classification and the reply pipeline
+internal/core/agents  reviewer/ and replier/
+internal/handler      webhook, worker pool, cron
+internal/pkg/store    file / sqlite / postgres backends
 ```
 
-Edit `.env` to define your `GITLAB_BASE_URL`, `GITLAB_TOKEN`, `STORE_DRIVER` (`file` or `sqlite` are easiest to start), and your preferred `LLM_DEFAULT_PROVIDER`.
+**To change what the reviewer looks for, edit `internal/core/prompt/`.** Those are
+Go string constants containing markdown — editing them needs no Go.
 
-### Running the Server (Webhook Mode)
+## Maintaining this
 
-Start the webhook handler and background worker pool:
+We are the only maintainer; upstream is dormant. Practical notes:
 
-```bash
-./server
-```
-
-_Point your GitLab Project Webhook to `http://<your-server>:8080/webhook/gitlab`._
-
-### Label-Based Review Triggering
-
-By default the agent only reviews Merge Requests that carry the **`ai-review`** label. Add the label to an MR in GitLab and the next open/update webhook event will trigger a review automatically.
-
-You can change the label name via the `REVIEW_TRIGGER_LABEL` environment variable:
-
-```bash
-# .env
-REVIEW_TRIGGER_LABEL=ai-review   # default — change to any GitLab label you prefer
-```
-
-> **Note:** The CLI (`./cli review`) bypasses the label check entirely — it always performs a review as long as the configured GitLab token has access to the target project.
-
-### Running the CLI (Interactive Dry-Run Mode)
-
-Trigger a review manually from your terminal and pick which comments to actually post:
-
-```bash
-./cli review --project-id 123 --mr-id 45
-```
-
-You can dynamically override the model for a specific run:
-
-```bash
-./cli review --project-id 123 --mr-id 45 --model claude-3-7-sonnet-20250219
-```
-
----
-
-## 🏗️ Architecture Overview
-
-- **`cmd/server`**: HTTP server handling GitLab Webhooks, Cron jobs, and Worker pools.
-- **`cmd/cli`**: The Command Line Interface for interactive local reviews.
-- **`internal/core`**: Heart of the logic (`review` and `reply` pipelines, `feedback` loops, `reviewer` / `replier` agents).
-- **`internal/pkg`**: External port adapters (GitLab API, Git CLI wrapper, LLM drivers, SQL/File storage DAOs).
-
-We strictly follow [Standard Go Project Layout](https://github.com/golang-standards/project-layout) conventions and utilize Clean Architecture principles.
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Please refer to the [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup, coding standards, and our branch/PR workflow.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+* Run `go test -race ./...`, not just `go test`. The worker pool, queue and cron
+  are genuinely concurrent, and races do not reliably fail a normal test run. This
+  is the one part of the codebase where Python intuition actively misleads: Go has
+  real parallelism and no GIL.
+* The compiler is the safety net. Wrong Go fails `go build` in seconds.
+* SQLite needs CGO (`CGO_ENABLED=1`), which the Dockerfile handles. Use the
+  Postgres or file store to avoid it.
+* Score prompt changes with the harness in [`../eval`](../eval) before shipping
+  them. "It felt better" is not evidence.
