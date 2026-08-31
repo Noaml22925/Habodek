@@ -232,12 +232,31 @@ was the mechanism worth ruling out, and it was ruled out.
 gateway, where each run also costs money.** Two ways out, and they answer
 different questions:
 
-- **`LLM_SEED`** (added 2026-08-31, off by default) pins sampling, so re-running
-  an unchanged configuration reproduces its result and any difference is
-  attributable to the edit. This is what makes an A/B mean anything.
-- **N≥3 runs at different seeds** tells you whether a result generalises rather
-  than holding at one point in sample space. Both are worth having; the seed is
-  the cheap one.
+- **N≥3 runs per configuration.** This is the one that actually works, and it is
+  not optional. Compare distributions, never single numbers.
+- **`LLM_SEED`** (added 2026-08-31, off by default) reduces variance but,
+  **measured against Ollama, does not deliver reproducible reviews.** It is worth
+  setting and worth re-testing on the real gateway; it is not a substitute for
+  the line above. The evidence is in the next section.
+
+### What `LLM_SEED` actually buys, measured
+
+Tested rather than assumed, because `DEPLOY.md` leans on it:
+
+- **The plumbing is correct.** With `LLM_SEED=1234` the request body grows by
+  exactly 12 bytes — `,"seed":1234` — on every call. The seed reaches the wire.
+- **Ollama honours it on its native API**: four calls at temperature 0.8
+  returned byte-identical completions.
+- **The OpenAI-compatible `/v1` endpoint is weaker**: three of four identical.
+- **A full review is not reproducible.** Two runs of `sql-injection` with the
+  same seed produced differently worded findings — both correct, both anchored
+  on line 9. A review is several LLM calls deep with tool use in between, and
+  llama.cpp is not bit-deterministic across runs regardless of seed.
+
+So the seed narrows the spread and does not close it. **Do not read a single
+seeded run as reproducible.** The real gateway is likely a different engine
+(vLLM behind LiteLLM is friendlier to determinism than llama.cpp), so re-run
+this same check there rather than inheriting the local answer.
 
 The raw material for all three runs is on this machine, gitignored:
 `.habodek-work/results-f5-baseline.json`, `results-anchor.json`,
@@ -462,14 +481,16 @@ model before deciding whether more is needed; the remaining two may simply be an
   one word to change if the real gateway ever rejects it.
 - **`GITLAB_BOT_USER_ID` is the self-reply loop guard.** Get it wrong and the agent
   talks to itself.
-- **`LLM_SEED` pins sampling; unset means the field is omitted.** *(Added
-  2026-08-31.)* `OpenAIClient.WithSeed` puts `seed` in the request body only when
-  the env var is set, so a gateway that does not support the parameter never
-  sees it and production behaviour is unchanged by default. It exists because
-  the evaluation harness cannot otherwise attribute a difference to the change
-  that caused it. Set it for measurement runs; leave it unset in production,
-  where varied sampling costs nothing. **openai provider only** — the anthropic
-  and google clients ignore it.
+- **`LLM_SEED` narrows sampling variance but does not remove it; unset means the
+  field is omitted.** *(Added and measured 2026-08-31.)* `OpenAIClient.WithSeed`
+  puts `seed` in the request body only when the env var is set, so a gateway that
+  does not support the parameter never sees it and production behaviour is
+  unchanged by default. **openai provider only** — the anthropic and google
+  clients ignore it. Verified to reach the wire (+12 bytes, exactly
+  `,"seed":1234`) and verified *not* to make a full review reproducible on
+  Ollama — see *What `LLM_SEED` actually buys*. Set it for measurement runs and
+  still run them more than once; leave it unset in production, where varied
+  sampling costs nothing.
 - **The CGO gap is closed.** WinLibs mingw-w64 is installed (`go env CC` → its
   `gcc`), `CGO_ENABLED=1`, and both the sqlite store tests and `go test -race`
   pass natively. The old advice to run race testing in Docker no longer applies.

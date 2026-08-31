@@ -224,13 +224,26 @@ them with `local/seed_gitlab.py` if they are not already there. It never posts
 and never labels, so it cannot disturb real repositories — but seed it into a
 scratch group anyway, not alongside production projects.
 
-**Set `LLM_SEED` before the first measured run, and run each configuration at
-least three times.** This is not optional caution, it is the finding of F5.1:
+**Run each configuration at least three times, and compare distributions rather
+than single numbers.** This is not optional caution, it is the finding of F5.1:
 locally, two runs of an *identical* configuration differed by three detections
 and by one false positive on a clean case — more than any prompt change made so
-far. Without a pinned seed, an A/B on the gateway will read its own sampling
-noise and charge you for the privilege. The seed is omitted from the request
-when unset, so it changes nothing until you set it.
+far. An A/B on one run each reads its own sampling noise and charges you for the
+privilege.
+
+**`LLM_SEED` helps but does not replace that.** It was tested locally rather than
+assumed: the seed provably reaches the request body, and Ollama honours it on its
+native API — but the OpenAI-compatible endpoint reproduced only three of four
+calls, and two *seeded* runs of the same review came back differently worded. A
+review is several calls deep with tool use in between, and llama.cpp is not
+bit-deterministic regardless of seed.
+
+Your gateway is probably a different engine, and vLLM behind LiteLLM is friendlier
+to determinism than llama.cpp, so **re-run that check rather than inheriting the
+local answer**: same MR, same seed, twice, and see whether the findings match. If
+they do, seeded A/B becomes trustworthy and cheap. If they don't, N≥3 is all you
+have. Either way the seed is omitted from the request when unset, so it changes
+nothing until you set it.
 
 **Read the numbers in this order**, and the order is the whole opinion of the
 harness:

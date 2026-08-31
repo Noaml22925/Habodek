@@ -34,6 +34,16 @@ type OpenAIClient struct {
 // nothing changes for a gateway that does not support it. Turn it on for
 // evaluation runs, not for production reviews, where varied sampling is
 // harmless and determinism buys nothing.
+//
+// It does not deliver reproducible reviews against Ollama, which is measured,
+// not assumed. The seed reaches the wire (the request body grows by exactly
+// `,"seed":N`) and Ollama applies it -- its native API returns byte-identical
+// completions across four calls at temperature 0.8. But the OpenAI-compatible
+// endpoint reproduced only three of four, and a full review, which is several
+// calls deep with tool use in between, came back differently worded on two runs
+// with the same seed. Treat this as variance reduction, not determinism, and do
+// not let it replace running a configuration more than once. It may behave
+// better on the real gateway; verify there rather than inheriting this result.
 func (c *OpenAIClient) WithSeed(seed *int) *OpenAIClient {
 	c.seed = seed
 	return c
