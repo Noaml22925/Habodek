@@ -1,0 +1,20 @@
+id: mutable-default-argument
+title: Mutable default argument accumulates across calls
+commit_message: Add default event list to webhook registration
+expect:
+- id: mutable-default
+  category: correctness
+  severity: major
+  file: src/webhooks.py
+  lines:
+  - 1
+  - 1
+  summary: The default list is created once at definition time and mutated by append, so every
+    caller that omits `events` shares one growing list.
+  keywords:
+  - mutable default
+  - default argument
+  - shared
+  - append
+tolerate: []
+notes: ''

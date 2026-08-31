@@ -1,0 +1,41 @@
+[project]
+name = "habodek"
+version = "0.1.0"
+description = "Evaluation harness for the Habodek GitLab review agent."
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+    "typer>=0.12",
+    "rich>=13.7",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+habodek = "habodek.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["habodek*", "eval*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# The evaluation corpus contains deliberately flawed code. Linting it would
+# flag the very defects the reviewer under test is supposed to find.
+extend-exclude = ["eval/corpus"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

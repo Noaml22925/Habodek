@@ -1,0 +1,6 @@
+id: clean-guard-clause
+title: 'CLEAN: adds validation and its test'
+commit_message: Reject negative quantities in cart updates
+expect: []
+tolerate: []
+notes: Correct guard clause, tested. A reviewer that finds fault here is noisy.

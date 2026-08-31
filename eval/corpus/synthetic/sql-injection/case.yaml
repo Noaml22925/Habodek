@@ -1,0 +1,20 @@
+id: sql-injection
+title: User-controlled value interpolated into SQL
+commit_message: Add order filtering by status
+expect:
+- id: sqli
+  category: security
+  severity: blocker
+  file: src/orders.py
+  lines:
+  - 9
+  - 9
+  summary: '`status` is interpolated straight into SQL. Use a parameterised query instead.'
+  keywords:
+  - injection
+  - sql
+  - parameteri
+  - bind
+  - escape
+tolerate: []
+notes: ''

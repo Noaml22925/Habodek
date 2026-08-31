@@ -1,0 +1,23 @@
+id: lsp-violation
+title: Subclass refuses a method its base class promises
+commit_message: Add read-only account type
+expect:
+- id: lsp
+  category: design
+  severity: major
+  file: src/accounts.py
+  lines:
+  - 14
+  - 19
+  summary: 'ReadOnlyAccount cannot stand in for Account: drain() takes an Account and will
+    raise for this subclass. Liskov violation -- the read-only case wants a narrower base
+    type, not a subclass that removes behaviour.'
+  keywords:
+  - liskov
+  - lsp
+  - substitut
+  - subclass
+  - contract
+  - notimplemented
+tolerate: []
+notes: drain() is unchanged. Only a reviewer reading the whole file sees the break.

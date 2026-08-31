@@ -1,0 +1,33 @@
+id: typos
+title: Misspelled identifier and user-facing string
+commit_message: Add receipt total helper
+expect:
+- id: typo-identifier
+  category: typo
+  severity: nit
+  file: src/receipts.py
+  lines:
+  - 1
+  - 1
+  summary: '`recieved` should be `received`.'
+  keywords:
+  - recieved
+  - received
+  - spell
+  - typo
+- id: typo-string
+  category: typo
+  severity: minor
+  file: src/receipts.py
+  lines:
+  - 7
+  - 7
+  summary: 'User-facing string has two misspellings: `recieved` and `successfuly`.'
+  keywords:
+  - successfuly
+  - successfully
+  - recieved
+  - spell
+  - typo
+tolerate: []
+notes: ''

@@ -1,0 +1,21 @@
+id: n-plus-one-query
+title: Query issued per loop iteration
+commit_message: Add order summary endpoint
+expect:
+- id: n-plus-one
+  category: perf
+  severity: major
+  file: src/reports.py
+  lines:
+  - 12
+  - 13
+  summary: Two queries per order id. Fetch the orders and their customers in bulk instead.
+  keywords:
+  - n+1
+  - n + 1
+  - per iteration
+  - loop
+  - bulk
+  - batch
+tolerate: []
+notes: ''

@@ -1,0 +1,37 @@
+id: srp-fat-handler
+title: One function parses, validates, persists, and emails
+commit_message: Add signup handler
+expect:
+- id: srp
+  category: design
+  severity: major
+  file: src/signup.py
+  lines:
+  - 6
+  - 9
+  summary: HTTP parsing, validation, persistence, and email delivery in one method. None of
+    it can be tested or reused independently.
+  keywords:
+  - single responsibility
+  - srp
+  - too many
+  - separate
+  - extract
+  - concern
+- id: plaintext-password
+  category: security
+  severity: blocker
+  file: src/signup.py
+  lines:
+  - 22
+  - 22
+  summary: The password is stored as submitted, without hashing.
+  keywords:
+  - hash
+  - plain
+  - bcrypt
+  - argon
+  - password
+tolerate:
+- import inside function body
+notes: ''

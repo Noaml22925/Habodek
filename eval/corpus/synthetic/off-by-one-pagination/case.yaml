@@ -1,0 +1,21 @@
+id: off-by-one-pagination
+title: Pagination window overlaps by one row
+commit_message: Switch pagination to 1-based page numbers
+expect:
+- id: off-by-one
+  category: correctness
+  severity: major
+  file: src/paging.py
+  lines:
+  - 4
+  - 4
+  summary: '`+ 1` makes each page return per_page + 1 items, so the last row of every page
+    repeats as the first row of the next.'
+  keywords:
+  - off-by-one
+  - off by one
+  - overlap
+  - duplicate
+  - extra
+tolerate: []
+notes: ''

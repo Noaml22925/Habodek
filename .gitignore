@@ -216,3 +216,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+.env
+.habodek-work/
+
+# Go
+agent/bin/
+agent/data/
+agent/resource/
+*.exe
+*.test
+
+# IDE
+.idea/
+.vscode/

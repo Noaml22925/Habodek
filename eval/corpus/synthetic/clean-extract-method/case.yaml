@@ -1,0 +1,6 @@
+id: clean-extract-method
+title: 'CLEAN: a genuine refactor with no defects'
+commit_message: Extract tax calculation from invoice total
+expect: []
+tolerate: []
+notes: Behaviour-preserving extraction. The correct review is silence.

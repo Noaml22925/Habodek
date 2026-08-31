@@ -1,0 +1,23 @@
+id: swallowed-exception
+title: Gateway errors swallowed, turning an outage into a zero balance
+commit_message: Make charge lookup resilient to gateway errors
+expect:
+- id: swallowed
+  category: correctness
+  severity: blocker
+  file: src/payments.py
+  lines:
+  - 14
+  - 15
+  summary: Catching bare Exception and returning [] makes a gateway outage indistinguishable
+    from a customer with no charges. total_charged then reports 0 for a customer who owes
+    money.
+  keywords:
+  - swallow
+  - except
+  - silent
+  - empty
+  - outage
+  - mask
+tolerate: []
+notes: The damage is in total_charged, which is unchanged. Requires reading past the diff.

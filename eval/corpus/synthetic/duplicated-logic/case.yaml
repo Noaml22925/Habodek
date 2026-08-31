@@ -1,0 +1,21 @@
+id: duplicated-logic
+title: Normalisation block copy-pasted instead of extracted
+commit_message: Add company name normalisation to the import path
+expect:
+- id: duplication
+  category: smell
+  severity: minor
+  file: src/normalise.py
+  lines:
+  - 9
+  - 14
+  summary: Four lines of normalisation duplicated verbatim. Extract a helper so the two paths
+    cannot drift apart.
+  keywords:
+  - duplicat
+  - dry
+  - extract
+  - repeat
+  - copy
+tolerate: []
+notes: ''

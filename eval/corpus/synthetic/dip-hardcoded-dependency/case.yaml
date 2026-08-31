@@ -1,0 +1,23 @@
+id: dip-hardcoded-dependency
+title: Service constructs its own concrete database connection
+commit_message: Add report service
+expect:
+- id: dip
+  category: design
+  severity: major
+  file: src/reporting.py
+  lines:
+  - 6
+  - 6
+  summary: Replacing injected collaborator with a concrete instance built in-place. The service
+    can no longer be tested without a real database, and the production host is hardcoded.
+  keywords:
+  - inject
+  - dependency
+  - concrete
+  - hardcod
+  - coupl
+  - untestable
+  - test
+tolerate: []
+notes: 'Also a regression: the previous version took the connection as a parameter.'

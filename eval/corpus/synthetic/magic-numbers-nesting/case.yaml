@@ -1,0 +1,22 @@
+id: magic-numbers-nesting
+title: Unexplained thresholds buried in nested conditionals
+commit_message: Add promotion eligibility check
+expect:
+- id: magic-numbers
+  category: smell
+  severity: minor
+  file: src/eligibility.py
+  lines:
+  - 9
+  - 18
+  summary: Three unexplained thresholds nested four deep, with if/else returning literal booleans.
+    Name the constants and collapse to a single boolean expression.
+  keywords:
+  - magic number
+  - constant
+  - nest
+  - boolean
+  - simplif
+  - return
+tolerate: []
+notes: ''
