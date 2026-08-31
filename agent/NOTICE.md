@@ -41,3 +41,19 @@ Recorded here as they are made, so the delta stays legible.
   vendored by path. Verified: `go build ./...` and `go vet ./...` clean afterwards.
 - **2026-08-31** — Upstream `README.md` moved to `README.upstream.md`; our own
   `README.md` and this file added. No behavioural change.
+- **2026-08-31** — Added `LLM_CONTEXT_WINDOWS`, a comma-separated `model=size`
+  override merged over `defaultContextWindows` in `internal/config/config.go`.
+  Upstream hard-codes that map and `resolveContextWindow` falls back to 128k for
+  anything absent from it, which is wrong in both directions: a locally served
+  model (Ollama defaults to a few thousand tokens and truncates *silently*) and a
+  model larger than 128k both need an entry. Configuration problem, configuration
+  fix. Malformed entries are warned about and skipped rather than fatal. The map
+  is now copied before use — upstream assigned the package-level map directly.
+- **2026-08-31** — Fixed a DI ordering bug that made `cmd/server` unstartable.
+  `provideStores` registered the five store interfaces (`domain.ReviewJobStore`
+  and friends) as a *side effect* of building `*store.Stores`, so they existed
+  only once something had invoked `*store.Stores` first. `cmd/cli` does, and
+  worked; `cmd/server` reaches `domain.ReviewJobStore` through the worker pool
+  and panicked on startup with "could not find service". Each interface is now
+  its own lazy provider pulling the one `*store.Stores`, so resolution no longer
+  depends on order. Upstream's webhook server cannot have run in this state.

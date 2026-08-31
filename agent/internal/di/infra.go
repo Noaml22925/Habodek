@@ -13,6 +13,11 @@ import (
 
 var InfraPackage = do.Package(
 	do.Lazy(provideStores),
+	do.Lazy(provideRepositorySettingsStore),
+	do.Lazy(provideReviewJobStore),
+	do.Lazy(provideReplyJobStore),
+	do.Lazy(provideFeedbackStore),
+	do.Lazy(provideReviewRecordStore),
 	do.Lazy(provideGitLabClient),
 	do.Lazy(provideGitManager),
 	do.Lazy(provideJobQueue),
@@ -20,19 +25,34 @@ var InfraPackage = do.Package(
 
 func provideStores(i do.Injector) (*store.Stores, error) {
 	cfg := do.MustInvoke[*config.Config](i)
-	stores, err := store.New(cfg.Store)
-	if err != nil {
-		return nil, err
-	}
+	return store.New(cfg.Store)
+}
 
-	// Register individual store interfaces for direct injection
-	do.ProvideValue[domain.RepositorySettingsStore](i, stores.RepoSettings)
-	do.ProvideValue[domain.ReviewJobStore](i, stores.ReviewJobs)
-	do.ProvideValue[domain.ReplyJobStore](i, stores.ReplyJobs)
-	do.ProvideValue[domain.FeedbackStore](i, stores.Feedbacks)
-	do.ProvideValue[domain.ReviewRecordStore](i, stores.ReviewRecords)
+// The individual store interfaces are separate lazy providers, each pulling the
+// one *store.Stores, rather than being registered as a side effect of building
+// it. Registering them inside provideStores made resolution order-dependent: it
+// worked from cmd/cli, which invokes *store.Stores first, and panicked from
+// cmd/server, which reaches domain.ReviewJobStore through the worker pool before
+// anything has asked for *store.Stores.
 
-	return stores, nil
+func provideRepositorySettingsStore(i do.Injector) (domain.RepositorySettingsStore, error) {
+	return do.MustInvoke[*store.Stores](i).RepoSettings, nil
+}
+
+func provideReviewJobStore(i do.Injector) (domain.ReviewJobStore, error) {
+	return do.MustInvoke[*store.Stores](i).ReviewJobs, nil
+}
+
+func provideReplyJobStore(i do.Injector) (domain.ReplyJobStore, error) {
+	return do.MustInvoke[*store.Stores](i).ReplyJobs, nil
+}
+
+func provideFeedbackStore(i do.Injector) (domain.FeedbackStore, error) {
+	return do.MustInvoke[*store.Stores](i).Feedbacks, nil
+}
+
+func provideReviewRecordStore(i do.Injector) (domain.ReviewRecordStore, error) {
+	return do.MustInvoke[*store.Stores](i).ReviewRecords, nil
 }
 
 func provideGitLabClient(i do.Injector) (domain.GitLabClient, error) {
