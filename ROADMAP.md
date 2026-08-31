@@ -23,6 +23,8 @@ agent/     The reviewer. Go. Forked at upstream ab50d4f, module renamed to
 eval/      Evaluation harness. Python. 13-case corpus + reviewer-agnostic scorer.
 habodek/   The `habodek eval` CLI and its diff-parsing support.
 local/     The local stack: GitLab CE compose file + the setup runbook.
+HANDOFF.md Start here after moving the repo to the VPN machine: what the zip
+           left behind, prerequisites, and how to prove it works offline.
 DEPLOY.md  The F6 checklist. Every step that needs the VPN, in order.
 ```
 
@@ -698,6 +700,11 @@ agent/
   internal/pkg/store/    file / sqlite / postgres.
   cmd/server, cmd/cli    webhook server; interactive dry-run review + clone-all.
   .env                   Local config, gitignored. Two FILL-ME GitLab values.
+
+HANDOFF.md               The first thing to read on the VPN machine: what the
+                         zip did not carry (both .env files), prerequisites,
+                         the Windows line-ending step, and the offline checks
+                         that must pass before touching the gateway.
 
 DEPLOY.md                The F6 checklist: bot account, config, webhook, the
                          three gateway unknowns and how to test each, then the
