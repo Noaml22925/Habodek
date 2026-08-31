@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"habodek/internal/pkg/queue"
 	"habodek/internal/domain"
+	"habodek/internal/pkg/queue"
 )
 
 // ReviewPipelineExecutor is called for review jobs.

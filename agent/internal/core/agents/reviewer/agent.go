@@ -9,8 +9,8 @@ import (
 	"sync"
 
 	"habodek/internal/core/prompt"
-	"habodek/internal/pkg/tools"
 	"habodek/internal/domain"
+	"habodek/internal/pkg/tools"
 )
 
 const (

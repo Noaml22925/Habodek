@@ -644,11 +644,12 @@ model before deciding whether more is needed; the remaining two may simply be an
   git checkout -- .
   ```
 
-  That took `gofmt -l` from 22 files to **6, which are genuinely unformatted** —
-  import ordering in upstream files, masked all along by the noise. They are
-  untouched: reformatting them adds diff against upstream, so it is a deliberate
-  call rather than a cleanup to do by reflex. None of our own files are among
-  them.
+  That took `gofmt -l` from 22 files to 6 genuinely unformatted ones — import
+  ordering in upstream files, masked all along by the noise — and those were
+  then formatted. **`gofmt -l` now returns nothing, so it is a usable signal
+  again**; the old advice to read `gofmt -d` instead is retired. The six were
+  upstream files, so this adds a small formatting-only delta against upstream,
+  accepted deliberately in exchange for a lint that works.
 - **The corpus generator used to undo that fix on every run.**
   `build_corpus.py` wrote with `write_text(..., encoding="utf-8")`, which on
   Windows translates to CRLF, so a rebuild — or just running the test suite —

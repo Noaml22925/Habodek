@@ -69,13 +69,13 @@ func (m *fakeReplyRepoManager) RepoPath(_ int64) string {
 }
 
 type fakeReplyJobStore struct {
-	statuses                []domain.ReplyJobStatus
-	updateCompletedErr      error
-	updateCompletedCalls    int
-	lastCompletedIntent     domain.ReplyIntent
-	lastCompletedSignal     domain.FeedbackSignal
-	lastThreadStateBefore   domain.ThreadState
-	lastThreadStateAfter    domain.ThreadState
+	statuses              []domain.ReplyJobStatus
+	updateCompletedErr    error
+	updateCompletedCalls  int
+	lastCompletedIntent   domain.ReplyIntent
+	lastCompletedSignal   domain.FeedbackSignal
+	lastThreadStateBefore domain.ThreadState
+	lastThreadStateAfter  domain.ThreadState
 }
 
 func (s *fakeReplyJobStore) Create(_ context.Context, _ *domain.ReplyJob) error { return nil }
@@ -123,8 +123,8 @@ func (s *fakeReplyRepoSettingsStore) ListEnabled(_ context.Context) ([]*domain.R
 func (s *fakeReplyRepoSettingsStore) MarkArchived(_ context.Context, _ int64) error { return nil }
 
 type fakeReplyFeedbackStore struct {
-	feedback              *domain.ReviewFeedback
-	updateSignalCalls     int
+	feedback               *domain.ReviewFeedback
+	updateSignalCalls      int
 	lastUpdatedThreadState domain.ThreadState
 }
 

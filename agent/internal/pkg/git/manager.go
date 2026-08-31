@@ -15,10 +15,10 @@ import (
 
 	"log/slog"
 
-	"habodek/internal/domain"
 	gogit "github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	"habodek/internal/domain"
 )
 
 const (

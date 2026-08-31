@@ -7,10 +7,10 @@ import (
 	"io"
 
 	"habodek/internal/config"
+	"habodek/internal/domain"
 	"habodek/internal/pkg/store/file"
 	"habodek/internal/pkg/store/postgres"
 	"habodek/internal/pkg/store/sqlite"
-	"habodek/internal/domain"
 )
 
 // Stores aggregates all store instances and a Close function.

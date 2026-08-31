@@ -5,12 +5,12 @@ package domain
 type ReviewJobStatus string
 
 const (
-	ReviewJobStatusPending         ReviewJobStatus = "PENDING"
-	ReviewJobStatusReviewing       ReviewJobStatus = "REVIEWING"
-	ReviewJobStatusPosting         ReviewJobStatus = "POSTING"
-	ReviewJobStatusCompleted       ReviewJobStatus = "COMPLETED"
-	ReviewJobStatusFailed          ReviewJobStatus = "FAILED"
-	ReviewJobStatusParseFailed     ReviewJobStatus = "PARSE_FAILED"
+	ReviewJobStatusPending     ReviewJobStatus = "PENDING"
+	ReviewJobStatusReviewing   ReviewJobStatus = "REVIEWING"
+	ReviewJobStatusPosting     ReviewJobStatus = "POSTING"
+	ReviewJobStatusCompleted   ReviewJobStatus = "COMPLETED"
+	ReviewJobStatusFailed      ReviewJobStatus = "FAILED"
+	ReviewJobStatusParseFailed ReviewJobStatus = "PARSE_FAILED"
 	ReviewJobStatusSkippedSize ReviewJobStatus = "SKIPPED_SIZE"
 )
 
