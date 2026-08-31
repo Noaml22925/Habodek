@@ -17,5 +17,8 @@ expect:
   - overlap
   - duplicate
   - extra
+  - '+1'
+  - + 1
+  - one too many
 tolerate: []
 notes: ''

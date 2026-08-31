@@ -224,7 +224,19 @@ class PaymentGateway:
                     "`+ 1` makes each page return per_page + 1 items, so the last row of "
                     "every page repeats as the first row of the next."
                 ),
-                "keywords": ["off-by-one", "off by one", "overlap", "duplicate", "extra"],
+                # "+1" and "one too many" describe the same defect as "off-by-one"
+                # and are the phrasings a reviewer reaches for when it names the
+                # arithmetic rather than the class of bug.
+                "keywords": [
+                    "off-by-one",
+                    "off by one",
+                    "overlap",
+                    "duplicate",
+                    "extra",
+                    "+1",
+                    "+ 1",
+                    "one too many",
+                ],
             }
         ],
     ),

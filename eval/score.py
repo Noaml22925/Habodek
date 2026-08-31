@@ -187,6 +187,20 @@ def from_json_file(path: Path) -> dict[str, list[EvalFinding]]:
 
 # ---- matching ----------------------------------------------------------
 
+# How far outside an expectation's window a finding may sit and still count.
+#
+# Reviewers anchor the same defect on different lines of the same construct, and
+# none of the readings is wrong: for an SQL injection they point at the `def` of
+# the offending method or at the interpolation inside it; for a mutable default
+# argument at the signature that declares it or at the `append` that makes it
+# bite; for a swallowed exception at the `try` or at the `except`. Every one of
+# those pairs was observed three lines apart or less in a single corpus run.
+#
+# The alternative -- hand-widening each case's window until the current reviewer
+# fits -- would tune the corpus to one reviewer, which is the one thing this
+# harness exists not to do. A uniform, documented slack keeps it comparable.
+ANCHOR_TOLERANCE = 3
+
 
 def matches(expected: ExpectedFinding, finding: EvalFinding) -> bool:
     """Whether a reported finding counts as having found a planted flaw.
@@ -194,10 +208,17 @@ def matches(expected: ExpectedFinding, finding: EvalFinding) -> bool:
     Requires both the right place and the right reason. Location alone is not
     enough -- a comment landing on the correct line while talking about something
     else has not found the bug, and counting it would flatter every reviewer.
+
+    Place is judged with `ANCHOR_TOLERANCE` slack, because reviewers anchor the
+    same defect on different lines of the same construct and all of those
+    readings are correct. This is not a loosening of the standard: the keyword
+    gate below is what enforces "right reason", and it is untouched.
     """
     if Path(finding.file).as_posix() != Path(expected.file).as_posix():
         return False
-    if not expected.covers(finding.line_start, finding.line_end):
+    if not expected.covers(
+        finding.line_start - ANCHOR_TOLERANCE, finding.line_end + ANCHOR_TOLERANCE
+    ):
         return False
     if not expected.keywords:
         return True

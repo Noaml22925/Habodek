@@ -74,7 +74,18 @@ def test_line_windows_only_need_to_overlap() -> None:
     # so overlap is enough.
     assert matches(expected(lines=[10, 12]), reported(line_start=12, line_end=20))
     assert matches(expected(lines=[10, 12]), reported(line_start=5, line_end=10))
-    assert not matches(expected(lines=[10, 12]), reported(line_start=13, line_end=20))
+
+
+def test_a_finding_just_outside_the_window_still_counts() -> None:
+    # The def line of the offending function, or the statement that makes the bug
+    # bite, sits a line or three off the planted anchor. That is the same finding.
+    assert matches(expected(lines=[10, 12]), reported(line_start=15, line_end=15))
+    assert matches(expected(lines=[10, 12]), reported(line_start=7, line_end=7))
+
+
+def test_tolerance_does_not_extend_to_an_unrelated_part_of_the_file() -> None:
+    assert not matches(expected(lines=[10, 12]), reported(line_start=16, line_end=20))
+    assert not matches(expected(lines=[10, 12]), reported(line_start=1, line_end=6))
 
 
 def test_keywords_are_case_insensitive_and_match_the_body() -> None:
