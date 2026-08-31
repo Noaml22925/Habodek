@@ -23,7 +23,12 @@ agent/     The reviewer. Go. Forked at upstream ab50d4f, module renamed to
 eval/      Evaluation harness. Python. 13-case corpus + reviewer-agnostic scorer.
 habodek/   The `habodek eval` CLI and its diff-parsing support.
 local/     The local stack: GitLab CE compose file + the setup runbook.
+DEPLOY.md  The F6 checklist. Every step that needs the VPN, in order.
 ```
+
+**Local work is finished.** Everything reachable without the VPN has been done;
+what remains is `DEPLOY.md`, start to finish, on a machine that can reach the
+company GitLab and LiteLLM.
 
 Done so far:
 
@@ -107,6 +112,10 @@ the metric that was declared the headline — noise — this is the best result
 available. It reported exactly one finding per case and never more, including on
 the two cases with two planted flaws.
 
+> **Read that paragraph with the next section in hand.** Those numbers are one
+> sample of a stochastic process, and repeating the run without changing anything
+> does not reproduce them. See *What three runs revealed*.
+
 Both of the numbers above were *worse* before the harness was corrected; see
 *The scoring fix* below, which is the most important thing in this section.
 
@@ -156,6 +165,83 @@ Be honest about the risk here: **both changes were made after seeing output, whi
 is how a corpus gets fitted to its reviewer.** The defence is that neither touches
 what counts as the right reason, and that noise-on-clean — the headline — cannot
 move either way, because clean cases have no expectations to match against.
+
+### What three runs revealed — read this before trusting any number above
+
+**F5.1, 2026-08-31.** The open anchor defect was root-caused and fixed, and
+measuring the fix uncovered something more important than the fix itself.
+
+**The anchor defect was mechanical, not a model failing.** The structured
+extract-then-verify path — the one that actually runs — showed the model
+`"lineNumber":42` in a JSON example and never said what the field meant. The
+legacy prompt path defines it; the structured path did not. A field rule was
+added to both `StructuredExtractionSystemPrompt` and `StrictReviewOutputFormat`.
+
+Then the corpus was run twice more. All three runs, same model, same machine:
+
+| | F5 baseline | anchor fix, run 1 | anchor fix, run 2 |
+|---|---|---|---|
+| Prompts | before | after | **identical to run 1** |
+| Noise on clean cases | 0 | 0 | **1** |
+| Precision | 100% | 100% | 71% |
+| Detection | 62% (8/13) | 46% (6/13) | 38% (5/13) |
+| `sql-injection` anchored at | 8 (1 off) | **9 (exact)** | **9 (exact)** |
+
+**Runs 1 and 2 differ only in sampling.** Same prompts, same corpus, same model —
+three detections apart, and one produced a false positive on a clean case while
+the other did not. Reviews run at `Temperature: 0.1` with no seed
+(`internal/core/review/structured_review.go`), and qwen3 is a thinking model, so
+small divergences in a long sampled reasoning chain compound.
+
+The consequences are worth stating plainly:
+
+- **F5's headline numbers are one sample, not a property of the reviewer.** The
+  perfect noise-on-clean of 0 did not survive a repeat of the same
+  configuration. Noise-on-clean is still the right metric — it is the second run
+  that says so, by catching a false positive on `clean-guard-clause` ("error
+  message mismatch") that the first two runs missed entirely.
+- **Run-to-run variance is larger than any prompt change made so far.** So no
+  single-run A/B on this rig can attribute anything, and the drop from 62% to
+  46% must *not* be read as damage done by the prompt edit.
+
+**Anchoring, unlike detection, turned out to be stable.** Of the five findings
+reported in both the baseline and run 1, four landed on the byte-identical line
+and one moved — `sql-injection`, from the `def` on line 8 to the interpolated
+query on line 9, exactly where the flaw is. It then stayed on line 9 in run 2.
+That is the change doing what it was written to do, visible precisely because
+anchoring does not wander the way detection does.
+
+Two cases still anchor three lines off (`mutable-default-argument`,
+`swallowed-exception`), so the instruction is a partial lever. Its wording was
+revised once on reasoning rather than on scores: the first version said "not the
+enclosing function signature", which is wrong for a mutable default argument —
+that defect *is* on the signature. It now reads "the line that would have to
+change to fix the issue". **It deliberately carries no examples**, because the
+obvious ones would have been lifted from our own corpus, and a prompt that names
+its test set is a prompt fitted to it.
+
+**Nothing was dropped by the new rule.** Every regressed case logged
+`suppressed: 0` — the extraction pass returned no candidates, which is the same
+failure mode as the baseline's own misses. `output_parser.go` does discard a
+finding whose line is not in the diff (`DropReason = "invalid_line"`), so this
+was the mechanism worth ruling out, and it was ruled out.
+
+### What this means for F6, concretely
+
+**Do not A/B a prompt change on a single run — not here, and not on the real
+gateway, where each run also costs money.** Two ways out, and they answer
+different questions:
+
+- **`LLM_SEED`** (added 2026-08-31, off by default) pins sampling, so re-running
+  an unchanged configuration reproduces its result and any difference is
+  attributable to the edit. This is what makes an A/B mean anything.
+- **N≥3 runs at different seeds** tells you whether a result generalises rather
+  than holding at one point in sample space. Both are worth having; the seed is
+  the cheap one.
+
+The raw material for all three runs is on this machine, gitignored:
+`.habodek-work/results-f5-baseline.json`, `results-anchor.json`,
+`results-anchor-run2.json`, each with per-case CLI logs beside it.
 
 ### Resuming a session
 
@@ -276,15 +362,26 @@ qwen3.6.
 - [x] **F5 — Scored.** All 13 cases run as a batch and graded: noise 0, precision
       100%, detection 62%. **Tuning was assessed and deliberately not done** — see
       *Next up* for why that is a decision, not an omission. *(2026-08-31)*
+- [x] **F5.1 — The anchor defect closed, and the rig's limits found.** Root cause
+      was a prompt field never defined, not the model. Two further runs showed
+      run-to-run variance exceeds any prompt change we have made, so single-run
+      A/B on this rig proves nothing; `LLM_SEED` was added to fix that. Anchor
+      distance is now measured. *(2026-08-31)*
 - [ ] **F6 — Deploy.** Real GitLab, real LiteLLM, bot account, webhook secret.
-      *(needs VPN)*
+      **Work from `DEPLOY.md`**, which is the whole checklist. *(needs VPN)*
 - [ ] **F7 — Pilot** on one friendly repo, then widen.
 
 ---
 
 ## Next up
 
-**F6: deploy.** F5 is scored and there is nothing further worth measuring here.
+**F6: deploy. Everything else is done.** All local work is finished — there is
+nothing left that can be attempted without the VPN, and `DEPLOY.md` is the
+checklist for what remains, written to be worked through top to bottom.
+
+**There is nothing further worth measuring on this machine**, and F5.1 sharpened
+why: run-to-run variance here is larger than the effect of any prompt change, so
+another local run buys a number that the next local run will contradict.
 
 **Why tuning stopped rather than continued.** The obvious levers were checked and
 each one is a bad trade against this model:
@@ -301,20 +398,30 @@ each one is a bad trade against this model:
   standing caveat applies at full force: **an 8B model validates plumbing, not
   review quality.** Prompt gains here may not survive qwen3.6, and a regression in
   noise very likely would.
+- **And, since F5.1, a fourth reason that applies to all of them:** the rig
+  cannot tell a real gain from sampling noise. Two runs of an identical
+  configuration differed by three detections and by one false positive on a
+  clean case. Any local A/B would be reading its own variance.
 
-So the prompts are unchanged and deliberately so. **Re-run `local/run_corpus.py`
-against the real gateway once the VPN is available** — that run, not this one, is
-the one worth tuning against. The harness is now a single command, so repeating it
-is cheap.
+So the quality prompts are unchanged and deliberately so. The one prompt edit
+that was made — defining `lineNumber` — is not in this category: it fixes where a
+finding is attached, not what counts as a finding, and it cannot make the
+reviewer say more or less than it otherwise would.
+
+**Re-run `local/run_corpus.py` against the real gateway once the VPN is
+available** — that run, not this one, is the one worth tuning against. Set
+`LLM_SEED` first, and run each configuration more than once. `DEPLOY.md` step 7
+has the loop and the levers in order.
 
 What F6 needs: real GitLab, real LiteLLM, a bot account and webhook secret, and
 `LLM_CONTEXT_WINDOWS` set for qwen3.6 (see *Gotchas*).
 
-One known defect is still open, under *Gotchas*: **comments anchor on the wrong
-line** — the `def` rather than the flaw. It no longer breaks scoring or
-auto-resolve, both of which now carry a tolerance, but a thread on the wrong line
-is still worse to read. It is a prompt change, so it belongs in the tuning pass
-that happens against the real model.
+The wrong-line anchoring defect is **fixed, partially** — see *What three runs
+revealed*. `sql-injection` now anchors exactly on the flaw and stayed there
+across two runs; `mutable-default-argument` and `swallowed-exception` are still
+three lines off. Check `Anchored on the flaw` in the eval output against the real
+model before deciding whether more is needed; the remaining two may simply be an
+8B model's reading of a construct.
 
 ---
 
@@ -330,6 +437,9 @@ that happens against the real model.
 | **Label trigger, not on-push** | Explicit cost control — `REVIEW_TRIGGER_LABEL`, default `ai-review`. Nothing runs unless somebody asks. Upstream had already made this choice. |
 | **Noise on clean cases is the headline metric** | Detection is the number everyone reaches for and the least useful alone: a reviewer that flags everything scores 100% on it. Two corpus cases are clean changes where the correct review is silence. |
 | **A corpus hit needs right place *and* right reason** | Location-only matching would credit a comment landing on the correct line while discussing something else, flattering every reviewer. Each expectation carries keywords. |
+| **A single corpus run is not evidence** *(2026-08-31)* | Two runs of an identical configuration differed by three detections, and one raised a false positive on a clean case while the other raised none. Reviews sample at temperature 0.1 with no seed, and a thinking model compounds small divergences. So any claim of the form "this change improved X" needs either `LLM_SEED` pinned, or several runs — and F5's headline numbers are one draw, not a property of the reviewer. |
+| **Anchor distance is measured, but is not a headline number** *(2026-08-31)* | `ANCHOR_TOLERANCE` deliberately scores a correct finding on a neighbouring line as a hit, which is right — and which hides a real presentation defect. Splitting "was it right" from "was it attached in the right place" keeps both visible without letting either distort the other. |
+| **The `lineNumber` prompt rule carries no examples** *(2026-08-31)* | The natural examples were the three corpus cases where the drift was observed. A prompt that names the cases it is scored on is fitted to its test set, and would have made the corpus useless for exactly the comparison it exists to support. The rule is stated generically instead. |
 | **"Right place" carries three lines of slack** *(2026-08-31)* | Reviewers anchor the same defect on different lines of the same construct — the `def` or the query inside it, the signature or the `append`, the `try` or the `except` — and none of those readings is wrong. Without the slack the first F5 run scored 50% precision instead of 100%, entirely on findings that were correct. The keyword gate is untouched, so this buys nothing for a reviewer that comments on the wrong thing, and noise-on-clean cannot move at all. |
 
 ---
@@ -352,6 +462,14 @@ that happens against the real model.
   one word to change if the real gateway ever rejects it.
 - **`GITLAB_BOT_USER_ID` is the self-reply loop guard.** Get it wrong and the agent
   talks to itself.
+- **`LLM_SEED` pins sampling; unset means the field is omitted.** *(Added
+  2026-08-31.)* `OpenAIClient.WithSeed` puts `seed` in the request body only when
+  the env var is set, so a gateway that does not support the parameter never
+  sees it and production behaviour is unchanged by default. It exists because
+  the evaluation harness cannot otherwise attribute a difference to the change
+  that caused it. Set it for measurement runs; leave it unset in production,
+  where varied sampling costs nothing. **openai provider only** — the anthropic
+  and google clients ignore it.
 - **The CGO gap is closed.** WinLibs mingw-w64 is installed (`go env CC` → its
   `gcc`), `CGO_ENABLED=1`, and both the sqlite store tests and `go test -race`
   pass natively. The old advice to run race testing in Docker no longer applies.
@@ -377,16 +495,43 @@ that happens against the real model.
   correct fix left the thread open — the bot insisting a fixed thing is still
   broken, which is how a reviewer stops trusting it. `nearModifiedLine` now
   allows `resolveAnchorTolerance = 3`, with a test.
-- **The other half of that defect is still open: the model anchors on the `def`,
-  not the flaw.** Seen repeatedly across the F5 batch — line 8 for a flaw on 9,
-  line 11 for a flaw on 14. Both consumers now tolerate it (auto-resolve above,
-  `ANCHOR_TOLERANCE` in the scorer), so nothing is broken by it, but a thread on
-  the wrong line still reads badly. Fixing it means a prompt change, which is
-  worth doing against the real model, not this one.
-- **Resolution never happens on reply, only on re-review.** The reply pipeline
-  classifies intent and logs `signal=ACCEPTED`, but nothing in `reply/` calls
-  `ResolveDiscussion`. So "reviewer says it is fixed" cannot close a thread; only
-  a later review pass can. That signal is sitting there unused if we want it.
+- **The other half of that defect had a mechanical cause, not a model one.**
+  *(Root-caused and fixed 2026-08-31.)* The model anchored on the `def` rather
+  than the flaw — line 8 for a flaw on 9, line 11 for a flaw on 14 — because
+  **nothing ever told it what `lineNumber` meant.** The legacy prompt path
+  defines the field (`system_prompts.go`: "the specific line in the NEW version
+  of the file where the issue is located"); the structured extract-then-verify
+  path, which is the one actually running, showed `"lineNumber":42` in a JSON
+  example and defined it nowhere. A field rule was added to both
+  `StructuredExtractionSystemPrompt` and `StrictReviewOutputFormat`. See
+  *The anchor fix* under *Current state* for what it measured.
+- **A finding on a line the diff did not add is dropped, not moved.**
+  `output_parser.go` sets `DropReason = "invalid_line"` when `lineNumber` is
+  absent from that file's added lines. So the anchor instruction cannot cause a
+  finding to land somewhere illegal — the worst case is that a correct finding
+  is discarded, which shows up as a detection loss, not as a bad comment.
+- **Resolution never happens on reply, only on re-review — and that is correct.**
+  *(Investigated and closed 2026-08-31; the earlier note called this a gap and
+  was wrong on both halves.)* Nothing in `reply/` calls `ResolveDiscussion`, by
+  design: upstream has an explicit test,
+  `TestPipelineExecuteDoesNotAutoResolveAcknowledgeOrRejectReplies`, asserting it
+  does not. A developer saying "fixed" moves the thread to
+  `pending_verification`, not resolved — the agent verifies against the
+  repository on the next pass instead of taking their word for it. That is
+  exactly the behaviour that impressed in F4, where it was told "fixed", read the
+  code, and refused to agree. Wiring resolve-on-reply would destroy it.
+- **And the reply signal is not unused.** It reaches the next review: rejected
+  and accepted feedback is stored, then re-injected by
+  `StructuredPromptContext` as `Recent developer feedback: - [rejected] ...`,
+  which lands in both the extraction prompt and the reviewer agent. The
+  self-learning loop is closed end to end.
+- **The one genuinely write-only value is `ThreadState`.** `acknowledged`,
+  `pending_verification` and `dismissed` are computed by `ComputeThreadState`,
+  persisted, and read by nothing. `autoResolveFixedThreads` decides purely on
+  "was a line near the anchor touched", ignoring thread state. Gating it on
+  `pending_verification` was considered and rejected: most fixes are pushed
+  silently without a reply, so that would stop resolving the common case to
+  tidy up a rare one.
 - **A push re-triggers a review on its own** (MR `update` event), and the second
   pass on the fixed code correctly posted nothing. Re-labelling afterwards is a
   no-op: `ExistsPendingOrCompleted` dedupes on project+MR+**head SHA** within 30
@@ -443,6 +588,14 @@ that happens against the real model.
 - Corpus expectations are anchored by substring, not line number — re-run
   `python eval/build_corpus.py` after editing `CASES`. It is deterministic: after
   a keyword edit, only that case's `case.yaml` should show in `git diff`.
+- **Anchor distance is reported but is not a headline number.** `anchor_distance()`
+  in `eval/score.py` measures how far outside the planted window a *matched*
+  finding landed; `habodek eval` shows it as "Anchored on the flaw: n/m (mean x
+  lines off)", and `--verbose` marks each drifted hit. It exists because
+  `ANCHOR_TOLERANCE` hides exactly the defect above: a thread on the wrong line
+  scores as a clean hit. This separates "was it right" from "was it attached in
+  the right place", which are different questions and should never share a
+  number. Reviewer-agnostic, so it stays useful against the real model.
 - **`ANCHOR_TOLERANCE = 3` in `eval/score.py` is load-bearing.** Without it the
   same run scores 50% precision instead of 100%, because correct findings landing
   on the `def` rather than the flaw are counted as noise. If you ever tighten it,
@@ -505,6 +658,12 @@ agent/
   internal/pkg/store/    file / sqlite / postgres.
   cmd/server, cmd/cli    webhook server; interactive dry-run review + clone-all.
   .env                   Local config, gitignored. Two FILL-ME GitLab values.
+
+DEPLOY.md                The F6 checklist: bot account, config, webhook, the
+                         three gateway unknowns and how to test each, then the
+                         scoring loop and which prompt levers to pull once the
+                         numbers come from the real model. Written to be worked
+                         through top to bottom on the VPN.
 
 local/
   docker-compose.yml     GitLab CE, trimmed to fit beside a model on one machine.
