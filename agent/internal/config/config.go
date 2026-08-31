@@ -175,7 +175,7 @@ func Load() (*Config, error) {
 	cfg.LLM.AnthropicAPIKey = firstOrEmpty(cfg.LLM.AnthropicAPIKeys)
 	cfg.LLM.GoogleAPIKeys = parseMultiKeys("GOOGLE_API_KEY", "GOOGLE_API_KEYS")
 	cfg.LLM.GoogleAPIKey = firstOrEmpty(cfg.LLM.GoogleAPIKeys)
-	cfg.LLM.ContextWindowSizes = defaultContextWindows
+	cfg.LLM.ContextWindowSizes = contextWindowSizes(os.Getenv("LLM_CONTEXT_WINDOWS"))
 	cfg.LLM.CompressionThreshold = envFloatOrDefault("LLM_CONTEXT_COMPRESSION_THRESHOLD", 0.55)
 
 	cfg.Worker.PoolSize = envIntOrDefault("WORKER_POOL_SIZE", 5)
@@ -228,6 +228,48 @@ func (c *Config) ValidateForReview() error {
 		return fmt.Errorf("GITLAB_BOT_USER_ID is required")
 	}
 	return nil
+}
+
+// contextWindowSizes returns the built-in model→context-window map with any
+// overrides from LLM_CONTEXT_WINDOWS merged in.
+//
+// The format is comma-separated model=size pairs: "qwen3:8b=16384,qwen3.6=262144".
+// Model names may contain ':', so '=' separates the pair, not ':'.
+//
+// This exists because resolveContextWindow falls back to 128k for any unlisted
+// model. That silently over-estimates a locally served model (Ollama defaults to
+// a few thousand tokens and truncates without an error) and silently
+// under-estimates a large one. Both are configuration problems, so they get a
+// configuration fix rather than a code change per model.
+//
+// Malformed entries are skipped with a warning: a typo in an env var must not
+// stop the agent from starting.
+func contextWindowSizes(override string) map[string]int {
+	sizes := make(map[string]int, len(defaultContextWindows))
+	for model, window := range defaultContextWindows {
+		sizes[model] = window
+	}
+
+	for _, pair := range strings.Split(override, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		model, size, found := strings.Cut(pair, "=")
+		model = strings.TrimSpace(model)
+		window, err := strconv.Atoi(strings.TrimSpace(size))
+
+		if !found || model == "" || err != nil || window <= 0 {
+			slog.Warn("config: ignoring malformed LLM_CONTEXT_WINDOWS entry",
+				"entry", pair, "expected", "model=size")
+			continue
+		}
+
+		sizes[model] = window
+	}
+
+	return sizes
 }
 
 func firstOrEmpty(s []string) string {
