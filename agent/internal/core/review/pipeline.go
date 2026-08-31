@@ -491,8 +491,31 @@ func (p *Pipeline) determineBaseSHA(ctx context.Context, job *domain.ReviewJob, 
 	return p.gitManager.RevParse(ctx, job.GitLabProjectID, "origin/"+job.TargetBranch)
 }
 
+// resolveAnchorTolerance is how far a bot thread's line may sit from a line the
+// new diff actually touched and still count as "this was fixed".
+//
+// A thread is anchored wherever the model chose to put the comment, which is
+// routinely a line or three from the code that ends up changing: it flags
+// `def find_by_status` and the parameterised-query fix lands on the line below.
+// Requiring an exact match left a correctly fixed thread open in the first live
+// test of this loop, which is the failure mode most likely to make a reviewer
+// stop trusting the bot -- it says it is still broken after you fixed it.
+const resolveAnchorTolerance = 3
+
+// nearModifiedLine reports whether the current diff added any line within
+// resolveAnchorTolerance of the one a bot thread is anchored to.
+func nearModifiedLine(addedLines map[int]bool, line int) bool {
+	for offset := -resolveAnchorTolerance; offset <= resolveAnchorTolerance; offset++ {
+		if addedLines[line+offset] {
+			return true
+		}
+	}
+	return false
+}
+
 // autoResolveFixedThreads resolves previous bot comment threads where the
-// flagged file+line was modified in the current diff (likely fixed by new commit).
+// flagged file was modified near the flagged line in the current diff (likely
+// fixed by a new commit).
 func (p *Pipeline) autoResolveFixedThreads(ctx context.Context, job *domain.ReviewJob, botComments []domain.BotUnresolvedComment, diffFiles []domain.DiffFile) int {
 	if len(botComments) == 0 {
 		return 0
@@ -517,7 +540,7 @@ func (p *Pipeline) autoResolveFixedThreads(ctx context.Context, job *domain.Revi
 		if !ok {
 			continue
 		}
-		if !lines[bc.LineNumber] {
+		if !nearModifiedLine(lines, bc.LineNumber) {
 			continue
 		}
 		if err := p.gitlabClient.ResolveDiscussion(ctx, job.GitLabProjectID, job.MrIID, bc.DiscussionID); err != nil {

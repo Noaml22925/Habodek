@@ -57,3 +57,13 @@ Recorded here as they are made, so the delta stays legible.
   and panicked on startup with "could not find service". Each interface is now
   its own lazy provider pulling the one `*store.Stores`, so resolution no longer
   depends on order. Upstream's webhook server cannot have run in this state.
+- **2026-08-31** — Gave `autoResolveFixedThreads` in `internal/core/review/pipeline.go`
+  a tolerance window (`resolveAnchorTolerance = 3`, via a new `nearModifiedLine`
+  helper, with a test). Upstream resolves a bot thread only when the thread's
+  exact line appears among the new diff's added lines. Threads are anchored
+  wherever the model put the comment, which is routinely a line or three from the
+  code that actually changes — it flags `def find_by_status` and the fix lands on
+  the query below. In our first live reply test a correct parameterised-query fix
+  left its thread open, which is the failure that teaches reviewers to stop
+  trusting the bot. Behaviour change, deliberately: it now resolves slightly more
+  eagerly, and a stale open thread is worse than an early-closed one.
