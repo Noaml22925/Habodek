@@ -135,14 +135,14 @@ Pushed to `github.com/Noaml22925/Habodek` (`origin`), branch `main`.
 History is deliberately structured so the fork delta stays legible:
 
 ```
-aa92c7f  Add the evaluation harness, and the project docs
-1a4254f  Make the fork ours: rename module, add attribution and docs
 4989776  Vendor gitlab-review-agent at ab50d4f (MIT)   <- pristine upstream
-a72f24a  Initial commit
+1a4254f  Make the fork ours: rename module, add attribution and docs
+         ... our work continues on top
 ```
 
-Upstream was committed **untouched first**, so `git show 1a4254f` is exactly "what
-we changed". `upstream` is configured as a second remote for the same purpose,
+Upstream was committed **untouched first**, so everything after `4989776` is
+exactly "what we changed" — `git log --oneline 4989776..HEAD` is the whole delta,
+and `agent/NOTICE.md` carries the same list in prose, with reasons. `upstream` is configured as a second remote for the same purpose,
 permanently:
 
 ```bash
