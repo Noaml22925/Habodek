@@ -15,6 +15,11 @@ Three numbers matter, in this order:
 
 Detection is listed last on purpose. A reviewer that reports every possible
 concern gets perfect detection and is worthless.
+
+Anchor distance is reported alongside these but is not one of them: it measures
+where a correct finding was attached, not whether it was right. A thread on the
+`def` above the bug is scored as a hit and should be -- but it still reads badly,
+and this is the number that says how often that happens.
 """
 
 from __future__ import annotations
@@ -225,6 +230,24 @@ def matches(expected: ExpectedFinding, finding: EvalFinding) -> bool:
     return any(keyword.lower() in finding.text for keyword in expected.keywords)
 
 
+def anchor_distance(expected: ExpectedFinding, finding: EvalFinding) -> int:
+    """How far outside the planted window a matched finding landed, in lines.
+
+    Zero means it landed inside the window. Anything above zero is a hit that
+    only counts because of `ANCHOR_TOLERANCE` -- the finding is right, but the
+    thread would be attached to the wrong line in the merge request, which is
+    still worse to read even though nothing scores it as a miss.
+
+    Reported separately from the headline numbers on purpose: this measures
+    presentation, not judgement, and the two should not be mixed.
+    """
+    if finding.line_end < expected.lines[0]:
+        return expected.lines[0] - finding.line_end
+    if finding.line_start > expected.lines[1]:
+        return finding.line_start - expected.lines[1]
+    return 0
+
+
 @dataclass
 class CaseScore:
     case_id: str
@@ -232,6 +255,9 @@ class CaseScore:
     hits: list[tuple[str, EvalFinding]] = field(default_factory=list)
     missed: list[ExpectedFinding] = field(default_factory=list)
     unmatched: list[EvalFinding] = field(default_factory=list)
+    # Anchor distance per hit, keyed by expectation id. Parallel to `hits`
+    # rather than folded into it so the tuple shape stays what callers expect.
+    distances: dict[str, int] = field(default_factory=dict)
 
     @property
     def planted(self) -> int:
@@ -255,6 +281,7 @@ def score_case(case: Case, findings: list[EvalFinding]) -> CaseScore:
             if index in claimed or not matches(expected, finding):
                 continue
             result.hits.append((expected.id, finding))
+            result.distances[expected.id] = anchor_distance(expected, finding)
             claimed.add(index)
             break
         else:
@@ -302,6 +329,25 @@ class Report:
         return self.found / self.reported if self.reported else 0.0
 
     @property
+    def anchor_distances(self) -> list[int]:
+        return [d for s in self.scores for d in s.distances.values()]
+
+    @property
+    def exact_anchors(self) -> int:
+        """Hits that landed inside the planted window with no slack needed."""
+        return sum(1 for d in self.anchor_distances if d == 0)
+
+    @property
+    def slack_anchors(self) -> int:
+        """Hits that are correct but attached outside the planted window."""
+        return sum(1 for d in self.anchor_distances if d > 0)
+
+    @property
+    def mean_anchor_distance(self) -> float:
+        distances = self.anchor_distances
+        return sum(distances) / len(distances) if distances else 0.0
+
+    @property
     def f1(self) -> float:
         p, r = self.precision, self.detection
         return 2 * p * r / (p + r) if (p + r) else 0.0
@@ -316,12 +362,16 @@ class Report:
             "detection": round(self.detection, 3),
             "precision": round(self.precision, 3),
             "f1": round(self.f1, 3),
+            "exact_anchors": self.exact_anchors,
+            "slack_anchors": self.slack_anchors,
+            "mean_anchor_distance": round(self.mean_anchor_distance, 2),
             "cases": {
                 s.case_id: {
                     "clean": s.is_clean,
                     "hits": [h[0] for h in s.hits],
                     "missed": [m.id for m in s.missed],
                     "unmatched": [f.location for f in s.unmatched],
+                    "anchor_distances": s.distances,
                 }
                 for s in self.scores
             },

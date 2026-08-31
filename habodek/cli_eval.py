@@ -118,6 +118,12 @@ def _summary(report) -> None:
     table.add_row("Detection", f"{report.detection:.0%} ({report.found}/{report.planted})")
     table.add_row("F1", f"{report.f1:.2f}")
     table.add_row("Total reported", str(report.reported))
+    if report.found:
+        table.add_row(
+            "Anchored on the flaw",
+            f"{report.exact_anchors}/{report.found} "
+            f"[dim](mean {report.mean_anchor_distance:.1f} lines off)[/dim]",
+        )
     console.print()
     console.print(table)
 
@@ -136,7 +142,11 @@ def _detail(report) -> None:
         label = " [dim](clean)[/dim]" if case_score.is_clean else ""
         console.print(f"{marker} [cyan]{case_score.case_id}[/cyan]{label}")
         for expectation_id, finding in case_score.hits:
-            console.print(f"     [green]found[/green]  {expectation_id} at {finding.location}")
+            off = case_score.distances.get(expectation_id, 0)
+            drift = f" [yellow](anchored {off} off)[/yellow]" if off else ""
+            console.print(
+                f"     [green]found[/green]  {expectation_id} at {finding.location}{drift}"
+            )
         for missed in case_score.missed:
             console.print(f"     [red]missed[/red] {missed.id} at {missed.file}:{missed.lines}")
         for extra in case_score.unmatched:

@@ -16,6 +16,7 @@ from eval.build_corpus import build
 from eval.case import Case, ExpectedFinding, discover_cases, materialise
 from eval.score import (
     EvalFinding,
+    anchor_distance,
     from_habodek,
     from_json_file,
     from_pr_agent,
@@ -345,3 +346,35 @@ def test_expected_line_lands_on_the_intended_code(case_id: str, needle: str, tmp
 
     texts = [file_change.line_text("new", n) or "" for n in expectation.line_range]
     assert any(needle in t for t in texts), f"{case_id}: expected line does not contain {needle!r}"
+
+
+# ---- anchor distance ---------------------------------------------------
+
+
+def test_a_finding_inside_the_window_is_anchored_exactly() -> None:
+    assert anchor_distance(expected(lines=[10, 12]), reported(line_start=11, line_end=11)) == 0
+
+
+def test_anchor_distance_measures_the_gap_on_either_side() -> None:
+    # The observed failure: the model flags the `def` above the flaw.
+    assert anchor_distance(expected(lines=[10, 12]), reported(line_start=8, line_end=8)) == 2
+    assert anchor_distance(expected(lines=[10, 12]), reported(line_start=15, line_end=15)) == 3
+
+
+def test_drifted_hits_are_still_hits_but_are_counted_separately() -> None:
+    # A correct finding attached three lines off is a hit, not noise -- but the
+    # thread reads badly, so the drift has to stay visible somewhere.
+    case = Case(id="c", title="t", expect=[expected(lines=[10, 12])])
+    report = score_all([case], {"c": [reported(line_start=9, line_end=9)]})
+    assert report.found == 1
+    assert report.noise == 0
+    assert report.exact_anchors == 0
+    assert report.slack_anchors == 1
+    assert report.mean_anchor_distance == 1.0
+
+
+def test_anchor_distance_is_absent_when_nothing_was_found() -> None:
+    case = Case(id="clean", title="t", expect=[])
+    report = score_all([case], {"clean": []})
+    assert report.exact_anchors == 0
+    assert report.mean_anchor_distance == 0.0
