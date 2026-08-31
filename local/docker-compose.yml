@@ -1,0 +1,77 @@
+# GitLab CE for local end-to-end testing of the reviewer.
+#
+#   cd local && cp .env.example .env   # then edit the password
+#   docker compose up -d
+#   docker compose logs -f gitlab      # first boot takes 5-10 minutes
+#
+# Reachable at http://localhost:8929, sign in as `root`.
+#
+# Before the first `up`, move Docker's disk image to D: — Docker Desktop →
+# Settings → Resources → Advanced → Disk image location. This instance wants
+# roughly 10GB and C: does not have room to spare.
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: habodek-gitlab
+    restart: unless-stopped
+    hostname: localhost
+
+    # 8929 rather than 80: the port is baked into every URL GitLab generates, so
+    # external_url and the published port have to agree or redirects and clone
+    # URLs come out wrong.
+    ports:
+      - "8929:8929"
+      - "2224:22"
+
+    environment:
+      GITLAB_ROOT_PASSWORD: ${GITLAB_ROOT_PASSWORD:?set GITLAB_ROOT_PASSWORD in local/.env}
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:8929'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2224
+
+        # A stock GitLab CE sizes itself for a real team and idles around 6-8GB.
+        # Everything below trims it to what one reviewer and 13 toy projects need.
+        puma['worker_processes'] = 2
+        puma['min_threads'] = 1
+        puma['max_threads'] = 4
+        sidekiq['max_concurrency'] = 9
+        postgresql['shared_buffers'] = "256MB"
+        postgresql['max_worker_processes'] = 4
+
+        prometheus_monitoring['enable'] = false
+        alertmanager['enable'] = false
+        node_exporter['enable'] = false
+        redis_exporter['enable'] = false
+        postgres_exporter['enable'] = false
+        gitlab_exporter['enable'] = false
+        registry['enable'] = false
+        mattermost['enable'] = false
+        # No grafana[] key here: Grafana was removed from GitLab in 16.3 and the
+        # omnibus now aborts the whole reconfigure on the unknown option.
+
+        # The agent posts to this instance from the host, and GitLab's webhook
+        # goes back out to the host. Both are local addresses it blocks by default.
+        gitlab_rails['webhook_timeout'] = 30
+
+    # Named volumes, not bind mounts to D:. The omnibus image chowns these paths
+    # to its own uids on boot, and a Windows bind mount cannot represent that —
+    # postgres then refuses to start. Relocate Docker's disk image instead.
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+
+    shm_size: "256m"
+
+    healthcheck:
+      test: ["CMD", "/opt/gitlab/bin/gitlab-healthcheck", "--fail", "--max-time", "10"]
+      interval: 60s
+      timeout: 30s
+      retries: 10
+      start_period: 10m
+
+volumes:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-data:
