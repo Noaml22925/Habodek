@@ -26,7 +26,8 @@ func StructuredExtractionSystemPrompt(reviewCtx *domain.ReviewContext) string {
 	sb.WriteString("- Every candidate must include an exact failure mode and a concrete production impact.\n")
 	sb.WriteString("- If the claim depends on code not shown here, keep it only as needsVerification=true and request exact paths, symbols, or patterns.\n")
 	sb.WriteString("- If you cannot explain the failure mode, drop the candidate.\n")
-	sb.WriteString("- Only analyze changed code shown in the bundle.\n\n")
+	sb.WriteString("- Only analyze changed code shown in the bundle.\n")
+	sb.WriteString("- lineNumber is the line in the new file that would have to change to fix the issue, not the line that merely opens the function or block around it.\n\n")
 
 	sb.WriteString(StructuredPromptContext(reviewCtx, false))
 	sb.WriteString("Output exactly one JSON object:\n")
@@ -111,6 +112,7 @@ func StrictReviewOutputFormat(lang ResponseLanguage) string {
 {"reviews":[{"filePath":"path/to/file.go","lineNumber":42,"reviewComment":"Confirmed production-impact issue.","severity":"high","confidence":"HIGH","category":"logic","suggestion":"// optional concrete fix"}]}
 
 Field rules:
+- lineNumber must be the line that would have to change to fix the issue, not the line that merely opens the block around it
 - reviewComment must be in %s and must assert a supported issue, not ask the developer to check anything
 - Allowed severity: critical, high, medium, low
 - Prefer medium or higher; use low only when the issue still has real production impact

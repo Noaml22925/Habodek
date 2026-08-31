@@ -67,3 +67,18 @@ Recorded here as they are made, so the delta stays legible.
   left its thread open, which is the failure that teaches reviewers to stop
   trusting the bot. Behaviour change, deliberately: it now resolves slightly more
   eagerly, and a stale open thread is worse than an early-closed one.
+- **2026-08-31** — Defined `lineNumber` in the structured prompts
+  (`internal/core/prompt/structured_review_prompts.go`), in both
+  `StructuredExtractionSystemPrompt` and `StrictReviewOutputFormat`. Upstream
+  defines the field in its legacy prompt path (`system_prompts.go`: "the specific
+  line in the NEW version of the file where the issue is located") and nowhere in
+  the structured extract-then-verify path, which is the path that actually runs.
+  The model saw `"lineNumber":42` in a JSON example and no statement of what it
+  meant, and it routinely anchored comments on the enclosing `def` rather than
+  the defect — a correct finding attached to the wrong line. The wording is "the
+  line that would have to change to fix the issue", chosen over "not the function
+  signature" because some defects (a mutable default argument) genuinely do live
+  on the signature. Deliberately carries no examples: the observed cases came
+  from our evaluation corpus, and putting them in the prompt would fit the
+  reviewer to its own test set. Effect measured only against a local 8B model,
+  where it is not separable from sampling noise — see `ROADMAP.md`.
