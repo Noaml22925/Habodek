@@ -610,12 +610,30 @@ model before deciding whether more is needed; the remaining two may simply be an
 
 - **Bash heredocs mangle both regex escaping and `\n`.** Two files were corrupted
   this way. Write Python/Go files with the Write tool, not `cat <<EOF`.
-- **`gofmt -l` reports 22 files as unformatted, and they are not.** The working
-  tree has CRLF while git stores LF, so gofmt sees every line as changed. Git is
-  correct and diffs against upstream are clean; only gofmt is confused. The
-  working tree predates `.gitattributes`, so a one-time `git checkout-index -a -f`
-  fixes it — **on a clean tree only**, it overwrites uncommitted work. Until then,
-  read `gofmt -d` rather than `gofmt -l`: a real complaint shows real hunks.
+- **The CRLF working tree is fixed, and `gofmt -l` is a real signal again.**
+  *(2026-08-31.)* The tree predated `.gitattributes`, so gofmt saw every line of
+  22 files as changed. `git checkout-index -a -f` does **not** fix it —
+  `core.autocrlf=true` is set globally on this machine and wins. What works is
+  deleting the tracked files and checking them out again, which applies the
+  `eol=lf` attribute:
+
+  ```bash
+  git status --porcelain     # MUST be empty; this destroys uncommitted work
+  git ls-files -z | xargs -0 rm -f
+  git checkout -- .
+  ```
+
+  That took `gofmt -l` from 22 files to **6, which are genuinely unformatted** —
+  import ordering in upstream files, masked all along by the noise. They are
+  untouched: reformatting them adds diff against upstream, so it is a deliberate
+  call rather than a cleanup to do by reflex. None of our own files are among
+  them.
+- **The corpus generator used to undo that fix on every run.**
+  `build_corpus.py` wrote with `write_text(..., encoding="utf-8")`, which on
+  Windows translates to CRLF, so a rebuild — or just running the test suite —
+  rewrote all 41 corpus files and dirtied the tree. Both call sites now pass
+  `newline="\n"`. This is what makes the generator's real property hold here:
+  after a keyword edit, exactly one `case.yaml` shows in `git diff`.
 
 **Open:**
 

@@ -743,7 +743,12 @@ def build() -> int:
             for rel_path, content in spec[side].items():
                 path = target / side / rel_path
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(content, encoding="utf-8")
+                # newline="\n" so a rebuild on Windows does not rewrite every
+                # corpus file with CRLF. Without it `git diff` shows all 41
+                # files after any edit, which destroys the property this
+                # generator exists for: that changing one case's keywords shows
+                # up as exactly one changed case.yaml.
+                path.write_text(content, encoding="utf-8", newline="\n")
 
         expectations = []
         for item in spec["expect"]:
@@ -772,6 +777,7 @@ def build() -> int:
         (target / "case.yaml").write_text(
             yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, width=88),
             encoding="utf-8",
+            newline="\n",
         )
 
     return len(CASES)
