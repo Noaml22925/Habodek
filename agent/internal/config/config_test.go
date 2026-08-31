@@ -85,3 +85,49 @@ func TestContextWindowSizesKeepsGoodEntriesBesideBadOnes(t *testing.T) {
 		t.Errorf(`sizes["qwen3:8b"] = %d, want 16384`, got)
 	}
 }
+
+// The seed has to stay absent unless it is asked for: a gateway that rejects an
+// unknown parameter must not start failing because we added one.
+func TestSeedIsUnsetUnlessConfigured(t *testing.T) {
+	t.Setenv("GITLAB_BASE_URL", "https://gitlab.example.com")
+	t.Setenv("GITLAB_TOKEN", "token")
+	t.Setenv("LLM_SEED", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.LLM.Seed != nil {
+		t.Fatalf("LLM.Seed = %d, want nil when LLM_SEED is unset", *cfg.LLM.Seed)
+	}
+}
+
+func TestSeedIsReadWhenConfigured(t *testing.T) {
+	t.Setenv("GITLAB_BASE_URL", "https://gitlab.example.com")
+	t.Setenv("GITLAB_TOKEN", "token")
+	t.Setenv("LLM_SEED", "1234")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.LLM.Seed == nil || *cfg.LLM.Seed != 1234 {
+		t.Fatalf("LLM.Seed = %v, want 1234", cfg.LLM.Seed)
+	}
+}
+
+// A typo must not take the agent down, and must not silently pin sampling to
+// some arbitrary value either.
+func TestMalformedSeedIsIgnored(t *testing.T) {
+	t.Setenv("GITLAB_BASE_URL", "https://gitlab.example.com")
+	t.Setenv("GITLAB_TOKEN", "token")
+	t.Setenv("LLM_SEED", "not-a-number")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.LLM.Seed != nil {
+		t.Fatalf("LLM.Seed = %d, want nil for a malformed value", *cfg.LLM.Seed)
+	}
+}

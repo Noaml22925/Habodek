@@ -16,7 +16,27 @@ type OpenAIClient struct {
 	baseURL       string
 	model         string
 	contextWindow int
+	seed          *int
 	httpClient    *http.Client
+}
+
+// WithSeed pins the sampling seed sent with every request, or clears it when
+// given nil.
+//
+// Reviews run at temperature 0.1, which is low but not zero, so the same merge
+// request reviewed twice does not produce the same findings. Measured on the
+// corpus, two runs of an identical configuration differed by three detections
+// and by one false positive on a clean case -- more than any prompt change we
+// have made. Without a seed the evaluation harness cannot attribute a
+// difference to the edit that supposedly caused it.
+//
+// Off by default: an unset seed is omitted from the request entirely, so
+// nothing changes for a gateway that does not support it. Turn it on for
+// evaluation runs, not for production reviews, where varied sampling is
+// harmless and determinism buys nothing.
+func (c *OpenAIClient) WithSeed(seed *int) *OpenAIClient {
+	c.seed = seed
+	return c
 }
 
 func NewOpenAIClient(apiKey, baseURL, model string, contextWindow int) (*OpenAIClient, error) {
@@ -86,6 +106,9 @@ func (c *OpenAIClient) Chat(ctx context.Context, req domain.ChatRequest) (*domai
 	}
 	if req.Temperature > 0 {
 		body["temperature"] = req.Temperature
+	}
+	if c.seed != nil {
+		body["seed"] = *c.seed
 	}
 
 	// Build tools

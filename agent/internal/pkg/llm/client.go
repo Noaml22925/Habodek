@@ -22,7 +22,11 @@ func NewClient(cfg config.LLMConfig, provider, model string) (domain.LLMClient, 
 
 	switch provider {
 	case "openai":
-		return NewOpenAIClient(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, model, contextWindow)
+		client, err := NewOpenAIClient(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, model, contextWindow)
+		if err != nil {
+			return nil, err
+		}
+		return client.WithSeed(cfg.Seed), nil
 	case "anthropic":
 		return NewAnthropicClient(cfg.AnthropicAPIKey, model, contextWindow)
 	case "google":
@@ -53,7 +57,7 @@ func NewBalancedClientFromConfig(cfg config.LLMConfig, repoModelOverride *string
 		clients = append(clients, c)
 	} else {
 		for _, key := range keys {
-			c, err := newClientForProvider(provider, key, cfg.OpenAIBaseURL, model, contextWindow)
+			c, err := newClientForProvider(provider, key, cfg.OpenAIBaseURL, model, contextWindow, cfg.Seed)
 			if err != nil {
 				slog.Warn("balancer: skipping invalid key", "provider", provider, "error", err)
 				continue
@@ -90,10 +94,14 @@ func keysForProvider(cfg config.LLMConfig, provider string) []string {
 	}
 }
 
-func newClientForProvider(provider, apiKey, openAIBaseURL, model string, contextWindow int) (domain.LLMClient, error) {
+func newClientForProvider(provider, apiKey, openAIBaseURL, model string, contextWindow int, seed *int) (domain.LLMClient, error) {
 	switch provider {
 	case "openai":
-		return NewOpenAIClient(apiKey, openAIBaseURL, model, contextWindow)
+		client, err := NewOpenAIClient(apiKey, openAIBaseURL, model, contextWindow)
+		if err != nil {
+			return nil, err
+		}
+		return client.WithSeed(seed), nil
 	case "anthropic":
 		return NewAnthropicClient(apiKey, model, contextWindow)
 	case "google":

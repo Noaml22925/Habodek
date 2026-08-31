@@ -60,6 +60,10 @@ type LLMConfig struct {
 	GoogleAPIKeys        []string // all keys for load balancing
 	ContextWindowSizes   map[string]int
 	CompressionThreshold float64
+	// Seed pins sampling for reproducible runs. nil means the field is omitted
+	// from the request, which is the default and the right setting for
+	// production. Set it only when measuring, via LLM_SEED.
+	Seed *int
 }
 
 type WorkerConfig struct {
@@ -177,6 +181,7 @@ func Load() (*Config, error) {
 	cfg.LLM.GoogleAPIKey = firstOrEmpty(cfg.LLM.GoogleAPIKeys)
 	cfg.LLM.ContextWindowSizes = contextWindowSizes(os.Getenv("LLM_CONTEXT_WINDOWS"))
 	cfg.LLM.CompressionThreshold = envFloatOrDefault("LLM_CONTEXT_COMPRESSION_THRESHOLD", 0.55)
+	cfg.LLM.Seed = envIntPtr("LLM_SEED")
 
 	cfg.Worker.PoolSize = envIntOrDefault("WORKER_POOL_SIZE", 5)
 	cfg.Worker.PollIntervalMs = envIntOrDefault("WORKER_POLL_INTERVAL_MS", 500)
@@ -310,6 +315,22 @@ func envOrDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// envIntPtr reads an optional integer. Unset returns nil, which callers treat
+// as "leave this out entirely" rather than as any particular value -- the
+// distinction zero cannot express.
+func envIntPtr(key string) *int {
+	v := os.Getenv(key)
+	if v == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		slog.Warn("invalid int config, ignoring", "key", key, "value", v)
+		return nil
+	}
+	return &n
 }
 
 func envIntOrDefault(key string, defaultVal int) int {
