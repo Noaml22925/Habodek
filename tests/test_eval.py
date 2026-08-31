@@ -7,13 +7,22 @@ worse than none, so the matching rules get tested directly.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from eval.build_corpus import build
 from eval.case import Case, ExpectedFinding, discover_cases, materialise
-from eval.score import EvalFinding, from_pr_agent, matches, score_all, score_case
+from eval.score import (
+    EvalFinding,
+    from_habodek,
+    from_json_file,
+    from_pr_agent,
+    matches,
+    score_all,
+    score_case,
+)
 from habodek.workspace.diff import build_change_map
 
 CORPUS = Path(__file__).parent.parent / "eval" / "corpus" / "synthetic"
@@ -175,6 +184,82 @@ def test_pr_agent_improve_and_review_shapes_are_both_read() -> None:
 def test_pr_agent_payload_missing_sections_is_not_an_error() -> None:
     assert from_pr_agent({}) == []
     assert from_pr_agent({"code_suggestions": None, "review": None}) == []
+
+
+def habodek_comment(**overrides) -> dict:
+    base = {
+        "filePath": "src/orders.py",
+        "lineNumber": 8,
+        "reviewComment": "SQL injection via unsanitized status parameter.",
+        "confidence": "HIGH",
+        "severity": "high",
+        "category": "security",
+        "suggestion": "Use a parameterized query.",
+    }
+    return base | overrides
+
+
+def test_habodek_output_normalises_to_a_single_line_finding() -> None:
+    findings = from_habodek([habodek_comment()])
+
+    assert len(findings) == 1
+    assert findings[0].file == "src/orders.py"
+    # The agent reports one line, not a range.
+    assert findings[0].line_start == findings[0].line_end == 8
+    assert "sql injection" in findings[0].text
+    assert findings[0].severity == "high"
+    assert findings[0].source == "habodek"
+
+
+def test_habodek_suppressed_comments_are_not_scored() -> None:
+    """A suppressed comment was never posted, so it must not count either way."""
+    findings = from_habodek(
+        [
+            habodek_comment(suppressed=True, dropReason="duplicate"),
+            habodek_comment(lineNumber=9),
+        ]
+    )
+
+    assert [f.line_start for f in findings] == [9]
+
+
+def test_habodek_missing_fields_do_not_raise() -> None:
+    findings = from_habodek([{"reviewComment": "something"}])
+
+    assert findings[0].file == ""
+    assert findings[0].line_start == 0
+
+
+def test_json_file_sniffs_habodek_and_pr_agent_shapes(tmp_path) -> None:
+    path = tmp_path / "results.json"
+    path.write_text(
+        json.dumps(
+            {
+                "sql-injection": [habodek_comment()],
+                "swallowed-exception": {
+                    "review": {
+                        "key_issues_to_review": [
+                            {
+                                "relevant_file": "src/a.py",
+                                "start_line": 3,
+                                "end_line": 3,
+                                "issue_header": "Swallowed",
+                                "issue_content": "bare except",
+                            }
+                        ]
+                    }
+                },
+                "typos": [{"file": "src/b.py", "line": 2, "title": "teh", "source": "human"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = from_json_file(path)
+
+    assert loaded["sql-injection"][0].source == "habodek"
+    assert loaded["swallowed-exception"][0].source == "pr-agent"
+    assert loaded["typos"][0].source == "human"
 
 
 # ---- the corpus itself -------------------------------------------------

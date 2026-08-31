@@ -118,17 +118,56 @@ def from_pr_agent(payload: dict[str, Any]) -> list[EvalFinding]:
     return out
 
 
+def from_habodek(comments: list[dict[str, Any]]) -> list[EvalFinding]:
+    """Normalise our own agent's output — `internal/domain.ParsedComment`.
+
+    Two shape differences from PR-Agent worth knowing. It reports a single line
+    rather than a range, so start and end are the same; and it carries its own
+    suppression decisions, which are dropped here. A suppressed comment was
+    never posted, so scoring it would credit or blame the reviewer for something
+    no human ever saw.
+    """
+    out: list[EvalFinding] = []
+
+    for comment in comments:
+        if comment.get("suppressed"):
+            continue
+
+        line = int(comment.get("lineNumber", 0) or 0)
+        out.append(
+            EvalFinding(
+                file=(comment.get("filePath") or "").strip(),
+                line_start=line,
+                line_end=line,
+                title=comment.get("reviewComment", "") or "",
+                body=comment.get("suggestion", "") or "",
+                category=str(comment.get("category", "") or ""),
+                severity=str(comment.get("severity", "") or ""),
+                source="habodek",
+            )
+        )
+
+    return out
+
+
+def _looks_like_habodek(payload: list[Any]) -> bool:
+    return bool(payload) and isinstance(payload[0], dict) and "reviewComment" in payload[0]
+
+
 def from_json_file(path: Path) -> dict[str, list[EvalFinding]]:
     """Load findings keyed by case id.
 
-    Accepts either `{case_id: [finding, ...]}` with normalised findings, or
-    `{case_id: <pr-agent payload>}`.
+    Accepts `{case_id: [finding, ...]}` with normalised findings, `{case_id:
+    [ParsedComment, ...]}` straight from our agent, or `{case_id: <pr-agent
+    payload>}`. The shape is sniffed per case so a file can mix reviewers.
     """
     raw = json.loads(path.read_text(encoding="utf-8"))
     out: dict[str, list[EvalFinding]] = {}
     for case_id, payload in raw.items():
         if isinstance(payload, dict):
             out[case_id] = from_pr_agent(payload)
+        elif _looks_like_habodek(payload):
+            out[case_id] = from_habodek(payload)
         else:
             out[case_id] = [
                 EvalFinding(
