@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
@@ -107,6 +108,10 @@ func (g *ContextGatherer) Gather(ctx context.Context, job *domain.ReviewJob, dif
 		})
 	}
 
+	// Author IDs seen on unresolved threads, so a mismatched GITLAB_BOT_USER_ID
+	// can be diagnosed from the log rather than guessed at.
+	seenAuthorIDs := map[int64]bool{}
+
 	for _, d := range discussions {
 		if len(d.Notes) == 0 {
 			continue
@@ -115,6 +120,7 @@ func (g *ContextGatherer) Gather(ctx context.Context, job *domain.ReviewJob, dif
 		if firstNote.Resolved || !firstNote.Resolvable {
 			continue
 		}
+		seenAuthorIDs[firstNote.AuthorID] = true
 		ec := domain.ExistingComment{
 			Summary:             domain.Truncate(firstNote.Body, 100),
 			ContentHash:         buildContentHash(firstNote.Body),
@@ -134,6 +140,22 @@ func (g *ContextGatherer) Gather(ctx context.Context, job *domain.ReviewJob, dif
 				LineNumber:   firstNote.Position.NewLine,
 			})
 		}
+	}
+
+	if len(rc.ExistingUnresolvedComments) > 0 && len(rc.BotUnresolvedComments) == 0 {
+		authors := make([]int64, 0, len(seenAuthorIDs))
+		for id := range seenAuthorIDs {
+			authors = append(authors, id)
+		}
+		slices.Sort(authors)
+		// Auto-resolve keys entirely off this ID match. A wrong-but-nonzero
+		// GITLAB_BOT_USER_ID passes ValidateForReview and then silently resolves
+		// nothing, which is indistinguishable from "nothing needed resolving".
+		slog.Warn("no unresolved thread was authored by the configured bot user; auto-resolve cannot run",
+			"configured_bot_user_id", g.botUserID,
+			"unresolved_threads", len(rc.ExistingUnresolvedComments),
+			"thread_author_ids", authors,
+		)
 	}
 
 	rc.DetectedLanguage = detectLanguage(diffFiles, job.RepoLanguage)

@@ -538,9 +538,14 @@ func (p *Pipeline) autoResolveFixedThreads(ctx context.Context, job *domain.Revi
 	for _, bc := range botComments {
 		lines, ok := modifiedLines[bc.FilePath]
 		if !ok {
+			slog.Info("thread left open: its file is not in this diff",
+				"discussion_id", bc.DiscussionID, "file", bc.FilePath, "line", bc.LineNumber)
 			continue
 		}
 		if !nearModifiedLine(lines, bc.LineNumber) {
+			slog.Info("thread left open: no line added within tolerance of its anchor",
+				"discussion_id", bc.DiscussionID, "file", bc.FilePath, "line", bc.LineNumber,
+				"tolerance", resolveAnchorTolerance)
 			continue
 		}
 		if err := p.gitlabClient.ResolveDiscussion(ctx, job.GitLabProjectID, job.MrIID, bc.DiscussionID); err != nil {
