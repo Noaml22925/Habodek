@@ -148,48 +148,22 @@ func buildReviewGoGitRefSpecs(targetBranch string, mrIID int64) []gitconfig.RefS
 }
 
 func (m *Manager) fetchReviewRefsWithRetry(ctx context.Context, repoPath, targetBranch string, mrIID int64) error {
-	const maxRetries = 3
-	backoff := 5 * time.Second
-	var lastErr error
 	refspecs := buildReviewFetchRefSpecs(targetBranch, mrIID)
 	if len(refspecs) == 0 {
 		return fmt.Errorf("no fetch refspecs configured")
 	}
 
-	args := []string{"fetch", "origin", "--no-tags", "--filter=blob:none"}
-	args = append(args, refspecs...)
+	args := append([]string{"fetch", "origin", "--no-tags", "--filter=blob:none"}, refspecs...)
 
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if err := m.runGit(ctx, repoPath, args...); err != nil {
-			lastErr = err
-			slog.Warn("git fetch failed, retrying",
-				"attempt", attempt,
-				"max_retries", maxRetries,
-				"path", repoPath,
-				"target_branch", targetBranch,
-				"mr_iid", mrIID,
-				"error", err,
-			)
-			if attempt < maxRetries {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(backoff):
-				}
-				backoff = min(backoff*3, 45*time.Second)
-			}
-			continue
-		}
-		return nil
-	}
-
-	slog.Warn("git fetch via CLI failed, falling back to go-git",
-		"path", repoPath,
-		"target_branch", targetBranch,
-		"mr_iid", mrIID,
-		"error", lastErr,
+	return runWithFallback(ctx, "fetch review refs",
+		retryPolicy{maxAttempts: 3, delay: 5 * time.Second, growth: 3, maxDelay: 45 * time.Second},
+		gitAttempt{"go-git", func(ctx context.Context) error {
+			return m.fetchReviewRefsWithGoGit(ctx, repoPath, targetBranch, mrIID)
+		}},
+		gitAttempt{"cli", func(ctx context.Context) error {
+			return m.runGit(ctx, repoPath, args...)
+		}},
 	)
-	return m.fetchReviewRefsWithGoGit(ctx, repoPath, targetBranch, mrIID)
 }
 
 func (m *Manager) fetchReviewRefsWithGoGit(ctx context.Context, repoPath, targetBranch string, mrIID int64) error {
