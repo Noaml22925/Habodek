@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -13,7 +14,9 @@ import (
 )
 
 const (
-	structuredReviewMaxTokens      = 4096
+	// structuredReviewMaxTokens is the fallback when REVIEW_STRUCTURED_MAX_TOKENS
+	// is unset; config.Load supplies the real default.
+	structuredReviewMaxTokens      = 8192
 	bundleFullFileMaxBytes         = 24 * 1024
 	bundleFullFileMaxLines         = 400
 	extractionExcerptRadius        = 12
@@ -81,6 +84,10 @@ func (p *Pipeline) runStructuredChunkReview(
 	lang prompt.ResponseLanguage,
 ) (*structuredChunkResult, error) {
 	repoPath := p.gitManager.RepoPath(job.GitLabProjectID)
+	maxTokens := p.cfg.Review.StructuredMaxTokens
+	if maxTokens <= 0 {
+		maxTokens = structuredReviewMaxTokens
+	}
 	toolCfg := p.cfg.Tool
 	toolCfg.BaseSHA = baseSHA
 	toolCfg.HeadSHA = job.HeadSHA
@@ -99,7 +106,7 @@ func (p *Pipeline) runStructuredChunkReview(
 
 	extractReq := domain.ChatRequest{
 		Model:       llmClient.ModelName(),
-		MaxTokens:   structuredReviewMaxTokens,
+		MaxTokens:   maxTokens,
 		Temperature: 0.1,
 		Messages: []domain.ChatMessage{
 			{Role: "system", Content: prompt.StructuredExtractionSystemPrompt(reviewCtx)},
@@ -115,7 +122,12 @@ func (p *Pipeline) runStructuredChunkReview(
 	totalTokens := extractResp.Usage.InputTokens + extractResp.Usage.OutputTokens
 	candidateOutput, err := parseExtractionOutput(extractResp.Content)
 	if err != nil {
-		return nil, fmt.Errorf("parse candidates: %w", err)
+		slog.Warn("extraction output did not parse",
+			"stop_reason", extractResp.StopReason,
+			"chars", len(extractResp.Content),
+			"raw", extractResp.Content,
+		)
+		return nil, llmParseError("parse candidates", extractResp, maxTokens, err)
 	}
 
 	candidates := filterExtractedCandidates(candidateOutput.Candidates, chunkFiles, reviewCtx.ExistingUnresolvedComments)
@@ -137,7 +149,7 @@ func (p *Pipeline) runStructuredChunkReview(
 
 	verifyReq := domain.ChatRequest{
 		Model:       llmClient.ModelName(),
-		MaxTokens:   structuredReviewMaxTokens,
+		MaxTokens:   maxTokens,
 		Temperature: 0.1,
 		Messages: []domain.ChatMessage{
 			{Role: "system", Content: prompt.StructuredVerificationSystemPrompt(reviewCtx, lang)},
@@ -153,7 +165,12 @@ func (p *Pipeline) runStructuredChunkReview(
 	totalTokens += verifyResp.Usage.InputTokens + verifyResp.Usage.OutputTokens
 	parsed, err := Parse(verifyResp.Content)
 	if err != nil {
-		return nil, fmt.Errorf("parse verified reviews: %w", err)
+		slog.Warn("verification output did not parse",
+			"stop_reason", verifyResp.StopReason,
+			"chars", len(verifyResp.Content),
+			"raw", verifyResp.Content,
+		)
+		return nil, llmParseError("parse verified reviews", verifyResp, maxTokens, err)
 	}
 
 	return &structuredChunkResult{
@@ -367,6 +384,40 @@ func buildVerificationUserPrompt(
 		sb.WriteByte('\n')
 	}
 	return sb.String()
+}
+
+// llmParseError explains a parse failure in terms of what the model actually
+// did. The parser can only report the key it failed to find, which is equally
+// true of a reply cut off mid-JSON, an empty reply, and a model that answered
+// in prose -- three problems with three different fixes.
+func llmParseError(stage string, resp *domain.ChatResponse, maxTokens int, err error) error {
+	content := strings.TrimSpace(resp.Content)
+
+	switch resp.StopReason {
+	case "length", "max_tokens":
+		return fmt.Errorf("%s: model hit the %d-token output cap and was cut off mid-JSON; "+
+			"raise REVIEW_STRUCTURED_MAX_TOKENS or lower REVIEW_CHUNK_SIZE: %w",
+			stage, maxTokens, err)
+	}
+
+	if content == "" {
+		return fmt.Errorf("%s: model returned no content at all (stop_reason=%q): %w",
+			stage, resp.StopReason, err)
+	}
+
+	return fmt.Errorf("%s: %w (stop_reason=%q, %d chars); model replied: %s",
+		stage, err, resp.StopReason, len(content), snippetForError(content, 400))
+}
+
+// snippetForError collapses whitespace and truncates on a rune boundary so the
+// excerpt stays on one log line and cannot split a multi-byte character.
+func snippetForError(s string, maxRunes int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return string(runes[:maxRunes]) + "..."
 }
 
 func parseExtractionOutput(raw string) (*extractionOutput, error) {

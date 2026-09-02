@@ -131,3 +131,25 @@ func TestMalformedSeedIsIgnored(t *testing.T) {
 		t.Fatalf("LLM.Seed = %d, want nil for a malformed value", *cfg.LLM.Seed)
 	}
 }
+
+func TestStructuredMaxTokensDefaultsAndOverrides(t *testing.T) {
+	t.Setenv("GITLAB_BASE_URL", "https://gitlab.example.com")
+	t.Setenv("GITLAB_TOKEN", "token")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Review.StructuredMaxTokens != 8192 {
+		t.Errorf("default StructuredMaxTokens = %d, want 8192", cfg.Review.StructuredMaxTokens)
+	}
+
+	t.Setenv("REVIEW_STRUCTURED_MAX_TOKENS", "32768")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Review.StructuredMaxTokens != 32768 {
+		t.Errorf("StructuredMaxTokens = %d, want 32768", cfg.Review.StructuredMaxTokens)
+	}
+}

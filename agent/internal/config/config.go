@@ -84,6 +84,11 @@ type ReviewConfig struct {
 	ChunkThreshold       int    // minimum file count that switches review mode from unified to chunked
 	TriageThreshold      int    // minimum file count that switches review mode from chunked to triage
 	MaxFindings          int    // maximum number of unsuppressed findings posted per review
+	// StructuredMaxTokens caps the output of each structured-review LLM call.
+	// Too low and the model is cut off mid-JSON and the response fails to
+	// parse; reasoning models need extra headroom because their thinking
+	// tokens are spent from this same budget.
+	StructuredMaxTokens int
 }
 
 type ToolConfig struct {
@@ -198,6 +203,7 @@ func Load() (*Config, error) {
 	cfg.Review.ChunkThreshold = envIntOrDefault("REVIEW_CHUNK_THRESHOLD", 21)
 	cfg.Review.TriageThreshold = envIntOrDefault("REVIEW_TRIAGE_THRESHOLD", 81)
 	cfg.Review.MaxFindings = envIntOrDefault("REVIEW_MAX_FINDINGS", 10)
+	cfg.Review.StructuredMaxTokens = envIntOrDefault("REVIEW_STRUCTURED_MAX_TOKENS", 8192)
 
 	cfg.Tool.ReadFileMaxKB = envIntOrDefault("TOOL_READ_FILE_MAX_KB", 30)
 	cfg.Tool.SearchMaxResults = envIntOrDefault("TOOL_SEARCH_MAX_RESULTS", 20)

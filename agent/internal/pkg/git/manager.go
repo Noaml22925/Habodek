@@ -452,71 +452,91 @@ func (m *Manager) CloneOrFetch(ctx context.Context, projectID int64, cloneURL st
 	return false, fmt.Errorf("clone: repository missing after clone preparation")
 }
 
-// fetchWithRetry runs broad git fetch for bulk prewarm operations.
-func (m *Manager) fetchWithRetry(ctx context.Context, repoPath string) error {
-	const maxRetries = 3
-	backoff := 5 * time.Second
+// gitAttempt is one way of reaching the remote, named so the logs say which
+// transport actually did the work.
+type gitAttempt struct {
+	name string
+	run  func(context.Context) error
+}
+
+type retryPolicy struct {
+	maxAttempts int
+	delay       time.Duration
+	growth      int
+	maxDelay    time.Duration
+}
+
+// runWithFallback retries primary with exponential backoff, then tries
+// secondary once.
+//
+// go-git is primary for both clone and fetch. It authenticates with an
+// explicit BasicAuth credential of its own, whereas the git CLI relies on the
+// server's 401 handshake -- which on a corporate network can dead-end in a
+// credential prompt that no longer has anywhere to go. The CLI stays as
+// fallback because its --filter=blob:none partial clone is far cheaper on
+// large repositories; go-git cannot filter blobs and fetches all of them.
+func runWithFallback(ctx context.Context, op string, policy retryPolicy, primary, secondary gitAttempt) error {
+	backoff := policy.delay
 	var lastErr error
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if err := m.runGit(ctx, repoPath, "fetch", "origin", "--prune"); err != nil {
-			lastErr = err
-			slog.Warn("git fetch failed, retrying",
-				"attempt", attempt,
-				"max_retries", maxRetries,
-				"path", repoPath,
-				"error", err,
-			)
-			if attempt < maxRetries {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(backoff):
-				}
-				backoff = min(backoff*3, 45*time.Second)
-			}
-			continue
+
+	for attempt := 1; attempt <= policy.maxAttempts; attempt++ {
+		err := primary.run(ctx)
+		if err == nil {
+			return nil
 		}
-		return nil
+		lastErr = err
+		slog.Warn("git "+op+" failed, retrying",
+			"transport", primary.name,
+			"attempt", attempt,
+			"max_attempts", policy.maxAttempts,
+			"error", err,
+		)
+		if attempt < policy.maxAttempts {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff = min(backoff*time.Duration(policy.growth), policy.maxDelay)
+		}
 	}
 
-	slog.Warn("git fetch via CLI failed, falling back to go-git",
-		"path", repoPath,
+	slog.Warn("git "+op+" exhausted retries, falling back",
+		"transport", primary.name,
+		"fallback", secondary.name,
 		"error", lastErr,
 	)
-	return m.fetchWithGoGit(ctx, repoPath)
+	if err := secondary.run(ctx); err != nil {
+		return fmt.Errorf("%s failed via %s (%v) and via %s: %w", op, primary.name, lastErr, secondary.name, err)
+	}
+	return nil
+}
+
+// fetchWithRetry runs broad git fetch for bulk prewarm operations.
+func (m *Manager) fetchWithRetry(ctx context.Context, repoPath string) error {
+	return runWithFallback(ctx, "fetch",
+		retryPolicy{maxAttempts: 3, delay: 5 * time.Second, growth: 3, maxDelay: 45 * time.Second},
+		gitAttempt{"go-git", func(ctx context.Context) error {
+			return m.fetchWithGoGit(ctx, repoPath)
+		}},
+		gitAttempt{"cli", func(ctx context.Context) error {
+			return m.runGit(ctx, repoPath, "fetch", "origin", "--prune")
+		}},
+	)
 }
 
 // cloneWithRetry clones a repo with retry logic and cleanup on failure.
 func (m *Manager) cloneWithRetry(ctx context.Context, cloneURL, repoPath string) error {
-	var lastErr error
-	backoff := cloneRetryDelay
-	for attempt := 1; attempt <= cloneMaxRetries; attempt++ {
-		if err := m.runGit(ctx, "", "clone", "--no-checkout", "--filter=blob:none", cloneURL, repoPath); err != nil {
-			lastErr = err
+	return runWithFallback(ctx, "clone",
+		retryPolicy{maxAttempts: cloneMaxRetries, delay: cloneRetryDelay, growth: 2, maxDelay: 2 * time.Minute},
+		gitAttempt{"go-git", func(ctx context.Context) error {
+			return m.cloneWithGoGit(ctx, cloneURL, repoPath)
+		}},
+		gitAttempt{"cli", func(ctx context.Context) error {
 			_ = os.RemoveAll(repoPath)
-			slog.Warn("git clone failed, retrying",
-				"attempt", attempt,
-				"max_retries", cloneMaxRetries,
-				"error", err,
-			)
-			if attempt < cloneMaxRetries {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(backoff):
-				}
-				backoff = min(backoff*2, 2*time.Minute)
-			}
-			continue
-		}
-		return nil
-	}
-
-	slog.Warn("git clone via CLI failed, falling back to go-git",
-		"path", repoPath,
-		"error", lastErr,
+			return m.runGit(ctx, "", "clone", "--no-checkout", "--filter=blob:none", cloneURL, repoPath)
+		}},
 	)
-	return m.cloneWithGoGit(ctx, cloneURL, repoPath)
 }
 
 func (m *Manager) cloneWithGoGit(ctx context.Context, cloneURL, repoPath string) error {

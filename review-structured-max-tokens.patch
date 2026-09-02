@@ -1,0 +1,362 @@
+Subject: [PATCH] review-structured-max-tokens
+---
+Index: agent/internal/config/config.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/agent/internal/config/config.go b/agent/internal/config/config.go
+--- a/agent/internal/config/config.go	(revision 5454b775b71b2e57084f609c8c14789a1504f55a)
++++ b/agent/internal/config/config.go	(date 1788355716552)
+@@ -84,6 +84,11 @@
+ 	ChunkThreshold       int    // minimum file count that switches review mode from unified to chunked
+ 	TriageThreshold      int    // minimum file count that switches review mode from chunked to triage
+ 	MaxFindings          int    // maximum number of unsuppressed findings posted per review
++	// StructuredMaxTokens caps the output of each structured-review LLM call.
++	// Too low and the model is cut off mid-JSON and the response fails to
++	// parse; reasoning models need extra headroom because their thinking
++	// tokens are spent from this same budget.
++	StructuredMaxTokens int
+ }
+ 
+ type ToolConfig struct {
+@@ -198,6 +203,7 @@
+ 	cfg.Review.ChunkThreshold = envIntOrDefault("REVIEW_CHUNK_THRESHOLD", 21)
+ 	cfg.Review.TriageThreshold = envIntOrDefault("REVIEW_TRIAGE_THRESHOLD", 81)
+ 	cfg.Review.MaxFindings = envIntOrDefault("REVIEW_MAX_FINDINGS", 10)
++	cfg.Review.StructuredMaxTokens = envIntOrDefault("REVIEW_STRUCTURED_MAX_TOKENS", 8192)
+ 
+ 	cfg.Tool.ReadFileMaxKB = envIntOrDefault("TOOL_READ_FILE_MAX_KB", 30)
+ 	cfg.Tool.SearchMaxResults = envIntOrDefault("TOOL_SEARCH_MAX_RESULTS", 20)
+Index: agent/.env.example
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/agent/.env.example b/agent/.env.example
+--- a/agent/.env.example	(revision 5454b775b71b2e57084f609c8c14789a1504f55a)
++++ b/agent/.env.example	(date 1788355732768)
+@@ -61,6 +61,12 @@
+ # MR label that triggers AI review (MRs must have this label to be reviewed)
+ REVIEW_TRIGGER_LABEL=ai-review
+ 
++# Output token cap for each structured-review call. Raise it if reviews fail
++# with "cut off mid-JSON": the model ran out of budget before finishing the
++# JSON. Reasoning models spend thinking tokens from this same budget and need
++# considerably more than 8192.
++REVIEW_STRUCTURED_MAX_TOKENS=8192
++
+ # AI response language for GitLab comments/replies (en | vi | ja)
+ AI_RESPONSE_LANGUAGE=en
+ 
+Index: agent/internal/config/config_test.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/agent/internal/config/config_test.go b/agent/internal/config/config_test.go
+--- a/agent/internal/config/config_test.go	(revision 5454b775b71b2e57084f609c8c14789a1504f55a)
++++ b/agent/internal/config/config_test.go	(date 1788355732769)
+@@ -131,3 +131,25 @@
+ 		t.Fatalf("LLM.Seed = %d, want nil for a malformed value", *cfg.LLM.Seed)
+ 	}
+ }
++
++func TestStructuredMaxTokensDefaultsAndOverrides(t *testing.T) {
++	t.Setenv("GITLAB_BASE_URL", "https://gitlab.example.com")
++	t.Setenv("GITLAB_TOKEN", "token")
++
++	cfg, err := Load()
++	if err != nil {
++		t.Fatalf("Load() error = %v", err)
++	}
++	if cfg.Review.StructuredMaxTokens != 8192 {
++		t.Errorf("default StructuredMaxTokens = %d, want 8192", cfg.Review.StructuredMaxTokens)
++	}
++
++	t.Setenv("REVIEW_STRUCTURED_MAX_TOKENS", "32768")
++	cfg, err = Load()
++	if err != nil {
++		t.Fatalf("Load() error = %v", err)
++	}
++	if cfg.Review.StructuredMaxTokens != 32768 {
++		t.Errorf("StructuredMaxTokens = %d, want 32768", cfg.Review.StructuredMaxTokens)
++	}
++}
+Index: agent/internal/core/review/structured_review.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/agent/internal/core/review/structured_review.go b/agent/internal/core/review/structured_review.go
+--- a/agent/internal/core/review/structured_review.go	(revision 5454b775b71b2e57084f609c8c14789a1504f55a)
++++ b/agent/internal/core/review/structured_review.go	(date 1788355716552)
+@@ -4,6 +4,7 @@
+ 	"context"
+ 	"encoding/json"
+ 	"fmt"
++	"log/slog"
+ 	"sort"
+ 	"strings"
+ 
+@@ -13,7 +14,9 @@
+ )
+ 
+ const (
+-	structuredReviewMaxTokens      = 4096
++	// structuredReviewMaxTokens is the fallback when REVIEW_STRUCTURED_MAX_TOKENS
++	// is unset; config.Load supplies the real default.
++	structuredReviewMaxTokens      = 8192
+ 	bundleFullFileMaxBytes         = 24 * 1024
+ 	bundleFullFileMaxLines         = 400
+ 	extractionExcerptRadius        = 12
+@@ -81,6 +84,10 @@
+ 	lang prompt.ResponseLanguage,
+ ) (*structuredChunkResult, error) {
+ 	repoPath := p.gitManager.RepoPath(job.GitLabProjectID)
++	maxTokens := p.cfg.Review.StructuredMaxTokens
++	if maxTokens <= 0 {
++		maxTokens = structuredReviewMaxTokens
++	}
+ 	toolCfg := p.cfg.Tool
+ 	toolCfg.BaseSHA = baseSHA
+ 	toolCfg.HeadSHA = job.HeadSHA
+@@ -99,7 +106,7 @@
+ 
+ 	extractReq := domain.ChatRequest{
+ 		Model:       llmClient.ModelName(),
+-		MaxTokens:   structuredReviewMaxTokens,
++		MaxTokens:   maxTokens,
+ 		Temperature: 0.1,
+ 		Messages: []domain.ChatMessage{
+ 			{Role: "system", Content: prompt.StructuredExtractionSystemPrompt(reviewCtx)},
+@@ -115,7 +122,12 @@
+ 	totalTokens := extractResp.Usage.InputTokens + extractResp.Usage.OutputTokens
+ 	candidateOutput, err := parseExtractionOutput(extractResp.Content)
+ 	if err != nil {
+-		return nil, fmt.Errorf("parse candidates: %w", err)
++		slog.Warn("extraction output did not parse",
++			"stop_reason", extractResp.StopReason,
++			"chars", len(extractResp.Content),
++			"raw", extractResp.Content,
++		)
++		return nil, llmParseError("parse candidates", extractResp, maxTokens, err)
+ 	}
+ 
+ 	candidates := filterExtractedCandidates(candidateOutput.Candidates, chunkFiles, reviewCtx.ExistingUnresolvedComments)
+@@ -137,7 +149,7 @@
+ 
+ 	verifyReq := domain.ChatRequest{
+ 		Model:       llmClient.ModelName(),
+-		MaxTokens:   structuredReviewMaxTokens,
++		MaxTokens:   maxTokens,
+ 		Temperature: 0.1,
+ 		Messages: []domain.ChatMessage{
+ 			{Role: "system", Content: prompt.StructuredVerificationSystemPrompt(reviewCtx, lang)},
+@@ -153,7 +165,12 @@
+ 	totalTokens += verifyResp.Usage.InputTokens + verifyResp.Usage.OutputTokens
+ 	parsed, err := Parse(verifyResp.Content)
+ 	if err != nil {
+-		return nil, fmt.Errorf("parse verified reviews: %w", err)
++		slog.Warn("verification output did not parse",
++			"stop_reason", verifyResp.StopReason,
++			"chars", len(verifyResp.Content),
++			"raw", verifyResp.Content,
++		)
++		return nil, llmParseError("parse verified reviews", verifyResp, maxTokens, err)
+ 	}
+ 
+ 	return &structuredChunkResult{
+@@ -369,6 +386,40 @@
+ 	return sb.String()
+ }
+ 
++// llmParseError explains a parse failure in terms of what the model actually
++// did. The parser can only report the key it failed to find, which is equally
++// true of a reply cut off mid-JSON, an empty reply, and a model that answered
++// in prose -- three problems with three different fixes.
++func llmParseError(stage string, resp *domain.ChatResponse, maxTokens int, err error) error {
++	content := strings.TrimSpace(resp.Content)
++
++	switch resp.StopReason {
++	case "length", "max_tokens":
++		return fmt.Errorf("%s: model hit the %d-token output cap and was cut off mid-JSON; "+
++			"raise REVIEW_STRUCTURED_MAX_TOKENS or lower REVIEW_CHUNK_SIZE: %w",
++			stage, maxTokens, err)
++	}
++
++	if content == "" {
++		return fmt.Errorf("%s: model returned no content at all (stop_reason=%q): %w",
++			stage, resp.StopReason, err)
++	}
++
++	return fmt.Errorf("%s: %w (stop_reason=%q, %d chars); model replied: %s",
++		stage, err, resp.StopReason, len(content), snippetForError(content, 400))
++}
++
++// snippetForError collapses whitespace and truncates on a rune boundary so the
++// excerpt stays on one log line and cannot split a multi-byte character.
++func snippetForError(s string, maxRunes int) string {
++	s = strings.Join(strings.Fields(s), " ")
++	runes := []rune(s)
++	if len(runes) <= maxRunes {
++		return s
++	}
++	return string(runes[:maxRunes]) + "..."
++}
++
+ func parseExtractionOutput(raw string) (*extractionOutput, error) {
+ 	jsonBlob, err := extractJSONForKey(raw, "candidates")
+ 	if err != nil {
+Index: agent/internal/pkg/git/manager.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/agent/internal/pkg/git/manager.go b/agent/internal/pkg/git/manager.go
+--- a/agent/internal/pkg/git/manager.go	(revision 5454b775b71b2e57084f609c8c14789a1504f55a)
++++ b/agent/internal/pkg/git/manager.go	(date 1788354725973)
+@@ -452,71 +452,91 @@
+ 	return false, fmt.Errorf("clone: repository missing after clone preparation")
+ }
+ 
+-// fetchWithRetry runs broad git fetch for bulk prewarm operations.
+-func (m *Manager) fetchWithRetry(ctx context.Context, repoPath string) error {
+-	const maxRetries = 3
+-	backoff := 5 * time.Second
++// gitAttempt is one way of reaching the remote, named so the logs say which
++// transport actually did the work.
++type gitAttempt struct {
++	name string
++	run  func(context.Context) error
++}
++
++type retryPolicy struct {
++	maxAttempts int
++	delay       time.Duration
++	growth      int
++	maxDelay    time.Duration
++}
++
++// runWithFallback retries primary with exponential backoff, then tries
++// secondary once.
++//
++// go-git is primary for both clone and fetch. It authenticates with an
++// explicit BasicAuth credential of its own, whereas the git CLI relies on the
++// server's 401 handshake -- which on a corporate network can dead-end in a
++// credential prompt that no longer has anywhere to go. The CLI stays as
++// fallback because its --filter=blob:none partial clone is far cheaper on
++// large repositories; go-git cannot filter blobs and fetches all of them.
++func runWithFallback(ctx context.Context, op string, policy retryPolicy, primary, secondary gitAttempt) error {
++	backoff := policy.delay
+ 	var lastErr error
+-	for attempt := 1; attempt <= maxRetries; attempt++ {
+-		if err := m.runGit(ctx, repoPath, "fetch", "origin", "--prune"); err != nil {
+-			lastErr = err
+-			slog.Warn("git fetch failed, retrying",
+-				"attempt", attempt,
+-				"max_retries", maxRetries,
+-				"path", repoPath,
+-				"error", err,
+-			)
+-			if attempt < maxRetries {
+-				select {
+-				case <-ctx.Done():
+-					return ctx.Err()
+-				case <-time.After(backoff):
+-				}
+-				backoff = min(backoff*3, 45*time.Second)
++
++	for attempt := 1; attempt <= policy.maxAttempts; attempt++ {
++		err := primary.run(ctx)
++		if err == nil {
++			return nil
++		}
++		lastErr = err
++		slog.Warn("git "+op+" failed, retrying",
++			"transport", primary.name,
++			"attempt", attempt,
++			"max_attempts", policy.maxAttempts,
++			"error", err,
++		)
++		if attempt < policy.maxAttempts {
++			select {
++			case <-ctx.Done():
++				return ctx.Err()
++			case <-time.After(backoff):
+ 			}
+-			continue
++			backoff = min(backoff*time.Duration(policy.growth), policy.maxDelay)
+ 		}
+-		return nil
+ 	}
+ 
+-	slog.Warn("git fetch via CLI failed, falling back to go-git",
+-		"path", repoPath,
++	slog.Warn("git "+op+" exhausted retries, falling back",
++		"transport", primary.name,
++		"fallback", secondary.name,
+ 		"error", lastErr,
+ 	)
+-	return m.fetchWithGoGit(ctx, repoPath)
++	if err := secondary.run(ctx); err != nil {
++		return fmt.Errorf("%s failed via %s (%v) and via %s: %w", op, primary.name, lastErr, secondary.name, err)
++	}
++	return nil
++}
++
++// fetchWithRetry runs broad git fetch for bulk prewarm operations.
++func (m *Manager) fetchWithRetry(ctx context.Context, repoPath string) error {
++	return runWithFallback(ctx, "fetch",
++		retryPolicy{maxAttempts: 3, delay: 5 * time.Second, growth: 3, maxDelay: 45 * time.Second},
++		gitAttempt{"go-git", func(ctx context.Context) error {
++			return m.fetchWithGoGit(ctx, repoPath)
++		}},
++		gitAttempt{"cli", func(ctx context.Context) error {
++			return m.runGit(ctx, repoPath, "fetch", "origin", "--prune")
++		}},
++	)
+ }
+ 
+ // cloneWithRetry clones a repo with retry logic and cleanup on failure.
+ func (m *Manager) cloneWithRetry(ctx context.Context, cloneURL, repoPath string) error {
+-	var lastErr error
+-	backoff := cloneRetryDelay
+-	for attempt := 1; attempt <= cloneMaxRetries; attempt++ {
+-		if err := m.runGit(ctx, "", "clone", "--no-checkout", "--filter=blob:none", cloneURL, repoPath); err != nil {
+-			lastErr = err
++	return runWithFallback(ctx, "clone",
++		retryPolicy{maxAttempts: cloneMaxRetries, delay: cloneRetryDelay, growth: 2, maxDelay: 2 * time.Minute},
++		gitAttempt{"go-git", func(ctx context.Context) error {
++			return m.cloneWithGoGit(ctx, cloneURL, repoPath)
++		}},
++		gitAttempt{"cli", func(ctx context.Context) error {
+ 			_ = os.RemoveAll(repoPath)
+-			slog.Warn("git clone failed, retrying",
+-				"attempt", attempt,
+-				"max_retries", cloneMaxRetries,
+-				"error", err,
+-			)
+-			if attempt < cloneMaxRetries {
+-				select {
+-				case <-ctx.Done():
+-					return ctx.Err()
+-				case <-time.After(backoff):
+-				}
+-				backoff = min(backoff*2, 2*time.Minute)
+-			}
+-			continue
+-		}
+-		return nil
+-	}
+-
+-	slog.Warn("git clone via CLI failed, falling back to go-git",
+-		"path", repoPath,
+-		"error", lastErr,
++			return m.runGit(ctx, "", "clone", "--no-checkout", "--filter=blob:none", cloneURL, repoPath)
++		}},
+ 	)
+-	return m.cloneWithGoGit(ctx, cloneURL, repoPath)
+ }
+ 
+ func (m *Manager) cloneWithGoGit(ctx context.Context, cloneURL, repoPath string) error {
