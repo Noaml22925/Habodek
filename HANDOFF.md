@@ -85,7 +85,68 @@ git ls-files -z | xargs -0 rm -f && git checkout -- .
 
 On Linux or macOS this is a non-issue; skip it.
 
-## 4. Prove it works before touching the VPN
+## 4. The VPN machine has no internet
+
+It cannot reach `proxy.golang.org`, `sum.golang.org`, or any module host, so a
+plain `go build` dies partway through resolving dependencies. Two symptoms, one
+cause:
+
+- `verifying golang.org/x/mod@v0.8.0/go.mod: ... 404` — the checksum database is
+  unreachable.
+- `unrecognized import path "dario.cat/mergo": ... lookup dario.cat ... server
+  misbehaving` — `GOPROXY=direct` asking DNS to resolve a vanity import path.
+
+Do not try to fix either one with `GOPROXY` or `GOSUMDB`. **The Go dependencies
+are vendored in `agent/vendor/`** and travel with the zip. Go detects that
+directory and builds from it automatically:
+
+```bash
+cd agent && go build ./...     # no network, no GOPROXY, no `go env -w`
+```
+
+To prove the build is genuinely offline rather than quietly using a warm cache:
+
+```bash
+cd agent
+GOFLAGS=-mod=vendor GOPROXY=off GOMODCACHE=$(mktemp -d) go build ./...
+```
+
+### Refreshing the vendor tree
+
+`vendor/` is committed, so it changes only when dependencies do — and that has
+to happen on a machine **with** internet:
+
+```bash
+cd agent
+go mod vendor                    # rewrites vendor/ and vendor/modules.txt
+go build -mod=vendor ./...       # confirm before committing
+git add vendor && git commit
+```
+
+`.gitattributes` marks `vendor/** -text`, so a global `core.autocrlf` cannot
+rewrite third-party sources the way section 3 describes for the rest of the tree.
+
+### Python
+
+Same shape, from the wheelhouse that ships alongside the source:
+
+```bash
+pip install --no-index --find-links wheels -e ".[dev]"
+```
+
+Those wheels are built for **CPython 3.12 on linux x86_64**. On any other
+interpreter or architecture they will not install; re-download them off-VPN
+using the command recorded in the transfer bundle's `TRANSFER.md`.
+
+### Docker
+
+`agent/Dockerfile` no longer runs `go mod download`, so its Go build stage is
+offline. `docker build` as a whole is not: it still needs a registry for the
+`golang:1.25-alpine` and `alpine:latest` base images and an apk mirror for
+`git`, `gcc`, and `musl-dev`. If the machine has neither, build the binaries
+directly with `go build` — nothing in production requires the container.
+
+## 5. Prove it works before touching the VPN
 
 None of this needs the company GitLab or the gateway, and all of it should pass
 on a fresh machine. If something here fails, fix it before going further —
@@ -106,7 +167,7 @@ ruff check .
 you ship anything concurrent; skip it if you have no gcc and are not touching the
 worker pool.
 
-## 5. Then: `DEPLOY.md`
+## 6. Then: `DEPLOY.md`
 
 That file is the whole of what remains, written to be worked top to bottom:
 
@@ -120,7 +181,7 @@ That file is the whole of what remains, written to be worked top to bottom:
 6. Scoring it against the real model — and the sampling-variance trap that makes
    single-run comparisons meaningless
 
-## 6. Two things to know before you start
+## 7. Two things to know before you start
 
 **The local score is not a prediction.** F5 measured noise 0, precision 100%,
 detection 62% against a local 8B model. Repeating that run *without changing

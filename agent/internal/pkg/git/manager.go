@@ -3,6 +3,7 @@ package git
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -564,33 +565,46 @@ func (m *Manager) goGitAuth() *githttp.BasicAuth {
 
 // GitEnv returns environment variables for git commands that inject the GitLab
 // token, http buffer, and HTTP/1.1 settings via GIT_CONFIG environment variables.
+//
+// The token goes in as HTTP Basic, not as the PRIVATE-TOKEN header the REST API
+// uses: GitLab's git-over-HTTP endpoint only accepts Basic, and answers anything
+// else with a 401. Git responds to a 401 by asking the terminal for a username
+// and password, which fails outright on a 2FA account and hangs forever in the
+// worker. GIT_TERMINAL_PROMPT and the emptied credential.helper make that
+// failure mode impossible rather than merely unlikely.
 func (m *Manager) GitEnv() []string {
-	if m.gitlabToken == "" {
-		return append(os.Environ(),
-			"GIT_CONFIG_COUNT=4",
-			"GIT_CONFIG_KEY_0=http.postBuffer",
-			"GIT_CONFIG_VALUE_0=524288000",
-			"GIT_CONFIG_KEY_1=http.version",
-			"GIT_CONFIG_VALUE_1=HTTP/1.1",
-			"GIT_CONFIG_KEY_2=http.lowSpeedLimit",
-			"GIT_CONFIG_VALUE_2=0",
-			"GIT_CONFIG_KEY_3=http.lowSpeedTime",
-			"GIT_CONFIG_VALUE_3=0",
+	env := append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=",
+	)
+
+	// Transport tuning shared by both branches. credential.helper is set to the
+	// empty string to disable any system credential manager, which would
+	// otherwise prompt, or cache and replay a stale credential.
+	tuning := []string{
+		"http.postBuffer", "524288000",
+		"http.version", "HTTP/1.1",
+		"http.lowSpeedLimit", "0",
+		"http.lowSpeedTime", "0",
+		"credential.helper", "",
+	}
+
+	var settings []string
+	if m.gitlabToken != "" {
+		basic := base64.StdEncoding.EncodeToString([]byte("oauth2:" + m.gitlabToken))
+		settings = append(settings, "http.extraHeader", "Authorization: Basic "+basic)
+	}
+	settings = append(settings, tuning...)
+
+	env = append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", len(settings)/2))
+	for i := 0; i < len(settings); i += 2 {
+		n := i / 2
+		env = append(env,
+			fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", n, settings[i]),
+			fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", n, settings[i+1]),
 		)
 	}
-	return append(os.Environ(),
-		"GIT_CONFIG_COUNT=5",
-		"GIT_CONFIG_KEY_0=http.extraHeader",
-		fmt.Sprintf("GIT_CONFIG_VALUE_0=PRIVATE-TOKEN: %s", m.gitlabToken),
-		"GIT_CONFIG_KEY_1=http.postBuffer",
-		"GIT_CONFIG_VALUE_1=524288000",
-		"GIT_CONFIG_KEY_2=http.version",
-		"GIT_CONFIG_VALUE_2=HTTP/1.1",
-		"GIT_CONFIG_KEY_3=http.lowSpeedLimit",
-		"GIT_CONFIG_VALUE_3=0",
-		"GIT_CONFIG_KEY_4=http.lowSpeedTime",
-		"GIT_CONFIG_VALUE_4=0",
-	)
+	return env
 }
 
 func (m *Manager) runGit(ctx context.Context, dir string, args ...string) error {

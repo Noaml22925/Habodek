@@ -6,16 +6,13 @@ RUN apk add --no-cache git gcc musl-dev
 
 WORKDIR /app
 
-# Download dependencies
-COPY go.mod go.sum ./
-RUN go mod download
-
-# Copy source code
+# Copy source code. Dependencies are vendored in ./vendor, so there is no
+# `go mod download` step and the build stage needs no network.
 COPY . .
 
 # Build the server and CLI applications
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /app/bin/server ./cmd/server
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /app/bin/cli ./cmd/cli
+RUN CGO_ENABLED=1 GOOS=linux go build -mod=vendor -ldflags="-s -w" -o /app/bin/server ./cmd/server
+RUN CGO_ENABLED=1 GOOS=linux go build -mod=vendor -ldflags="-s -w" -o /app/bin/cli ./cmd/cli
 
 # Final runtime stage
 FROM alpine:latest
