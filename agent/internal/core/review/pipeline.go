@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"habodek/internal/config"
+	"habodek/internal/core/agents/replier"
 	"habodek/internal/core/agents/reviewer"
 	"habodek/internal/core/prompt"
 	"habodek/internal/domain"
@@ -29,6 +30,7 @@ type Pipeline struct {
 	gitManager    *git.Manager
 	gatherer      *ContextGatherer
 	agent         *reviewer.Agent
+	verdictAgent  *replier.Agent
 }
 
 type PipelineDeps struct {
@@ -41,6 +43,7 @@ type PipelineDeps struct {
 	GitManager    *git.Manager
 	Gatherer      *ContextGatherer
 	Agent         *reviewer.Agent
+	VerdictAgent  *replier.Agent
 }
 
 func NewPipeline(deps PipelineDeps) *Pipeline {
@@ -54,6 +57,7 @@ func NewPipeline(deps PipelineDeps) *Pipeline {
 		gitManager:    deps.GitManager,
 		gatherer:      deps.Gatherer,
 		agent:         deps.Agent,
+		verdictAgent:  deps.VerdictAgent,
 	}
 }
 
@@ -233,13 +237,17 @@ func (p *Pipeline) Execute(ctx context.Context, job *domain.ReviewJob) error {
 		}
 	}
 
-	// Auto-resolve previous bot threads where the flagged line was modified in this diff
-	resolved := p.autoResolveFixedThreads(ctx, job, reviewCtx.BotUnresolvedComments, plan.Files)
-	if resolved > 0 {
-		log.Info("auto-resolved fixed threads", "count", resolved)
+	// Re-check every open thread against the code at HEAD and answer it with an
+	// explicit verdict. Threads are never resolved here — the developer does
+	// that, having read a real conclusion rather than a guess from line numbers.
+	verdicts := p.runThreadVerdicts(ctx, job, reviewCtx.BotUnresolvedComments, plan.Files, llmClient, reviewCtx.CustomPrompt, lang)
+	if verdicts.checked > 0 {
+		log.Info("thread verdicts posted",
+			"checked", verdicts.checked, "stands", verdicts.stands, "withdrawn", verdicts.withdrawn,
+			"fixed", verdicts.fixed, "fix_incomplete", verdicts.partial, "unclear", verdicts.unclear)
 	}
 
-	summary := buildSummaryComment(posted, suppressed, len(comments), resolved, aggregated, llmClient.ModelName(), lang)
+	summary := buildSummaryComment(posted, suppressed, len(comments), verdicts, aggregated, llmClient.ModelName(), lang)
 	if _, err := p.gitlabClient.PostThreadComment(ctx, job.GitLabProjectID, job.MrIID, summary); err != nil {
 		log.Warn("failed to post summary comment", "error", err)
 	}
@@ -491,72 +499,6 @@ func (p *Pipeline) determineBaseSHA(ctx context.Context, job *domain.ReviewJob, 
 	return p.gitManager.RevParse(ctx, job.GitLabProjectID, "origin/"+job.TargetBranch)
 }
 
-// resolveAnchorTolerance is how far a bot thread's line may sit from a line the
-// new diff actually touched and still count as "this was fixed".
-//
-// A thread is anchored wherever the model chose to put the comment, which is
-// routinely a line or three from the code that ends up changing: it flags
-// `def find_by_status` and the parameterised-query fix lands on the line below.
-// Requiring an exact match left a correctly fixed thread open in the first live
-// test of this loop, which is the failure mode most likely to make a reviewer
-// stop trusting the bot -- it says it is still broken after you fixed it.
-const resolveAnchorTolerance = 3
-
-// nearModifiedLine reports whether the current diff added any line within
-// resolveAnchorTolerance of the one a bot thread is anchored to.
-func nearModifiedLine(addedLines map[int]bool, line int) bool {
-	for offset := -resolveAnchorTolerance; offset <= resolveAnchorTolerance; offset++ {
-		if addedLines[line+offset] {
-			return true
-		}
-	}
-	return false
-}
-
-// autoResolveFixedThreads resolves previous bot comment threads where the
-// flagged file was modified near the flagged line in the current diff (likely
-// fixed by a new commit).
-func (p *Pipeline) autoResolveFixedThreads(ctx context.Context, job *domain.ReviewJob, botComments []domain.BotUnresolvedComment, diffFiles []domain.DiffFile) int {
-	if len(botComments) == 0 {
-		return 0
-	}
-
-	// Build set of modified lines per file
-	modifiedLines := make(map[string]map[int]bool)
-	for _, f := range diffFiles {
-		if len(f.AddedLines) == 0 {
-			continue
-		}
-		lineSet := make(map[int]bool, len(f.AddedLines))
-		for _, ln := range f.AddedLines {
-			lineSet[ln] = true
-		}
-		modifiedLines[f.Path] = lineSet
-	}
-
-	resolved := 0
-	for _, bc := range botComments {
-		lines, ok := modifiedLines[bc.FilePath]
-		if !ok {
-			slog.Info("thread left open: its file is not in this diff",
-				"discussion_id", bc.DiscussionID, "file", bc.FilePath, "line", bc.LineNumber)
-			continue
-		}
-		if !nearModifiedLine(lines, bc.LineNumber) {
-			slog.Info("thread left open: no line added within tolerance of its anchor",
-				"discussion_id", bc.DiscussionID, "file", bc.FilePath, "line", bc.LineNumber,
-				"tolerance", resolveAnchorTolerance)
-			continue
-		}
-		if err := p.gitlabClient.ResolveDiscussion(ctx, job.GitLabProjectID, job.MrIID, bc.DiscussionID); err != nil {
-			slog.Warn("failed to auto-resolve discussion", "discussion_id", bc.DiscussionID, "error", err)
-			continue
-		}
-		resolved++
-	}
-	return resolved
-}
-
 func (p *Pipeline) failJob(ctx context.Context, job *domain.ReviewJob, msg string) error {
 	slog.Error("review job failed", "job_id", job.ID.String(), "error", msg)
 	if err := p.jobStore.UpdateStatus(ctx, job.ID, domain.ReviewJobStatusFailed, &msg); err != nil {
@@ -602,7 +544,7 @@ func SeverityBadge(s domain.CommentSeverity) string {
 	}
 }
 
-func buildSummaryComment(posted, suppressed, total, resolved int, result *aggregatedResult, model string, lang prompt.ResponseLanguage) string {
+func buildSummaryComment(posted, suppressed, total int, verdicts verdictOutcome, result *aggregatedResult, model string, lang prompt.ResponseLanguage) string {
 	var sb strings.Builder
 	sb.WriteString("## AI Review Summary\n\n")
 
@@ -618,8 +560,8 @@ func buildSummaryComment(posted, suppressed, total, resolved int, result *aggreg
 		sb.WriteString("\n")
 	}
 
-	if resolved > 0 {
-		sb.WriteString(prompt.SummaryAutoResolved(lang, resolved))
+	if verdicts.checked > 0 {
+		sb.WriteString(prompt.SummaryVerdicts(lang, verdicts.checked, verdicts.settled()))
 	}
 
 	fmt.Fprintf(&sb, "- **Model:** %s\n", model)

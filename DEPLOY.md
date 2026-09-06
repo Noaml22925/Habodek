@@ -198,12 +198,46 @@ cd agent && go run ./cmd/server     # or the container; listens on :8080
 Then label one merge request `ai-review`. Nothing happens without the label —
 that is the cost control, and it is deliberate.
 
-Two behaviours that look like bugs and are not:
+Behaviours that look like bugs and are not:
 
 - **Re-labelling does not re-trigger.** Deduplication is on project + MR + head
   SHA within 30 minutes. To force a re-review, push a commit.
-- **A push re-triggers on its own** via the MR update event, and the second pass
-  over fixed code correctly posts nothing.
+- **A push re-triggers on its own** via the MR update event. The second pass is
+  incremental — it diffs from the previous review's head, not from the target
+  branch — so it posts nothing about code it already reviewed. For a genuine
+  full re-read of the whole MR, force-push (`git commit --amend && git push
+  --force`): the old head stops being an ancestor and the base drops back to the
+  target branch.
+- **The bot never resolves a thread.** After a push it re-reads every open
+  thread against the code at HEAD and replies with a verdict — Still stands,
+  Withdrawn, Fixed, Partially fixed, or Undecided — then leaves the resolve
+  button to you. Set `REVIEW_THREAD_VERDICTS=false` to turn the pass off; it
+  costs one LLM call per open thread that has something new to say.
+
+If a project requires all threads resolved before merge, note that this is now
+always a human action. That is deliberate: the previous auto-resolve keyed off
+nothing but line proximity, so it closed wrong fixes and left correct ones open.
+
+### Reading a review after the fact
+
+The summary comment reports how many findings were filtered but not which ones.
+To see what was dropped and why — including criticals the model found but the
+filters ate:
+
+```bash
+cd agent && go run ./cmd/cli findings --project-id <id> --mr-id <iid>        # counts
+cd agent && go run ./cmd/cli findings --project-id <id> --mr-id <iid> --all  # each finding
+```
+
+Two drop reasons deserve attention during the pilot, because neither is ever
+re-offered on a later review — the next pass diffs from this head and will not
+look at those lines again:
+
+- `invalid_line` — the model flagged a line the diff did not add. Common when
+  the bug is in code the change calls rather than in the change itself.
+- `findings_budget` — ranked below `REVIEW_MAX_FINDINGS` (default 10). The
+  ranking is severity → confidence → file risk, so this only bites on MRs with
+  more than ten surviving findings.
 
 ---
 

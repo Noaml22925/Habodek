@@ -91,6 +91,7 @@ type ReplyJob struct {
 	FeedbackSignal     *FeedbackSignal `db:"feedback_signal" json:"feedbackSignal,omitempty"`
 	ThreadStateBefore  *ThreadState    `db:"thread_state_before" json:"threadStateBefore,omitempty"`
 	ThreadStateAfter   *ThreadState    `db:"thread_state_after" json:"threadStateAfter,omitempty"`
+	ReviewerVerdict    *ReplyVerdict   `db:"reviewer_verdict" json:"reviewerVerdict,omitempty"`
 	ErrorMessage       *string         `db:"error_message" json:"errorMessage,omitempty"`
 	QueuedAt           time.Time       `db:"queued_at" json:"queuedAt"`
 	StartedAt          *time.Time      `db:"started_at" json:"startedAt,omitempty"`
@@ -205,8 +206,18 @@ type ExistingComment struct {
 
 type BotUnresolvedComment struct {
 	DiscussionID string
+	NoteID       int64
 	FilePath     string
 	LineNumber   int
+	// Body is the reviewer's original finding, and ThreadHistory everything
+	// said since. The re-check pass needs both to judge its own comment
+	// against the current code and against whatever the developer argued.
+	Body          string
+	ThreadHistory string
+	// LastNoteByBot is true when nobody has replied since the reviewer last
+	// spoke. Used to keep the re-check pass quiet on threads where neither the
+	// code nor the conversation has moved.
+	LastNoteByBot bool
 }
 
 // ─── GitLab types ────────────────────────────────────────────────────────────────

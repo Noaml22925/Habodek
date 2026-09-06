@@ -86,11 +86,12 @@ func (s *ReplyJobStore) UpdateStatus(_ context.Context, id uuid.UUID, status dom
 	})
 }
 
-func (s *ReplyJobStore) UpdateCompleted(_ context.Context, id uuid.UUID, reply string, intent domain.ReplyIntent, signal domain.FeedbackSignal, beforeState, afterState domain.ThreadState) error {
+func (s *ReplyJobStore) UpdateCompleted(_ context.Context, id uuid.UUID, reply string, intent domain.ReplyIntent, verdict domain.ReplyVerdict, signal domain.FeedbackSignal, beforeState, afterState domain.ThreadState) error {
 	return s.updateJob(id, func(job *domain.ReplyJob) {
 		job.Status = domain.ReplyJobStatusCompleted
 		job.ReplyContent = &reply
 		job.IntentClassified = &intent
+		job.ReviewerVerdict = domain.Ptr(verdict)
 		job.FeedbackSignal = &signal
 		job.ThreadStateBefore = domain.Ptr(beforeState)
 		job.ThreadStateAfter = domain.Ptr(afterState)

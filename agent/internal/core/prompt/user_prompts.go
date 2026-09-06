@@ -86,17 +86,6 @@ func SummaryFilteredCount(lang ResponseLanguage, count int) string {
 	}
 }
 
-func SummaryAutoResolved(lang ResponseLanguage, count int) string {
-	switch lang {
-	case LangVI:
-		return fmt.Sprintf("- **Auto-resolved:** %d (vấn đề trước đã được sửa trong commit mới)\n", count)
-	case LangJA:
-		return fmt.Sprintf("- **自動解決:** %d（以前のコミットで修正された問題）\n", count)
-	default:
-		return fmt.Sprintf("- **Auto-resolved:** %d (previously flagged issues fixed in new commit)\n", count)
-	}
-}
-
 func SummaryReplyHint(lang ResponseLanguage) string {
 	switch lang {
 	case LangVI:
@@ -105,5 +94,71 @@ func SummaryReplyHint(lang ResponseLanguage) string {
 		return "\nコメントに返信して議論できます。ボットが完全なコンテキストで応答します。"
 	default:
 		return "\nReply to any comment to discuss. Bot will respond with full context."
+	}
+}
+
+// VerdictLabel prefixes a re-check comment so the conclusion is visible without
+// reading the prose — and so a developer scanning a long thread can see at a
+// glance whether the reviewer backed down or dug in.
+func VerdictLabel(lang ResponseLanguage, verdict string) string {
+	switch verdict {
+	case "withdrawn":
+		switch lang {
+		case LangVI:
+			return "↩️ **Đã rút lại** — nhận xét ban đầu không đúng."
+		case LangJA:
+			return "↩️ **撤回** — 元の指摘は誤りでした。"
+		default:
+			return "↩️ **Withdrawn** — my original comment was wrong."
+		}
+	case "fixed":
+		switch lang {
+		case LangVI:
+			return "✅ **Đã được sửa** — đã kiểm tra lại code hiện tại."
+		case LangJA:
+			return "✅ **修正済み** — 現在のコードを再確認しました。"
+		default:
+			return "✅ **Fixed** — re-checked against the current code."
+		}
+	case "fix_incomplete":
+		switch lang {
+		case LangVI:
+			return "🟡 **Sửa chưa đủ** — vẫn còn một phần."
+		case LangJA:
+			return "🟡 **修正が不完全** — 一部が残っています。"
+		default:
+			return "🟡 **Partially fixed** — part of the concern remains."
+		}
+	case "unclear":
+		switch lang {
+		case LangVI:
+			return "❔ **Chưa kết luận được** — cần thêm thông tin."
+		case LangJA:
+			return "❔ **判断できません** — 追加情報が必要です。"
+		default:
+			return "❔ **Undecided** — I cannot tell from what I can see."
+		}
+	default:
+		switch lang {
+		case LangVI:
+			return "🔴 **Vẫn còn vấn đề** — sau khi xem lại code hiện tại."
+		case LangJA:
+			return "🔴 **未解決** — 現在のコードを確認した上での判断です。"
+		default:
+			return "🔴 **Still stands** — after re-reading the current code."
+		}
+	}
+}
+
+// SummaryVerdicts reports the re-check pass in the review summary. Note the
+// wording: threads are never closed by the bot, only answered.
+func SummaryVerdicts(lang ResponseLanguage, checked, settled int) string {
+	switch lang {
+	case LangVI:
+		return fmt.Sprintf("- **Thread đã kiểm tra lại:** %d (%d đã có kết luận — bạn tự resolve nếu đồng ý)\n", checked, settled)
+	case LangJA:
+		return fmt.Sprintf("- **再確認したスレッド:** %d（うち%d件は結論済み — 解決は開発者が判断してください）\n", checked, settled)
+	default:
+		return fmt.Sprintf("- **Open threads re-checked:** %d (%d settled — resolve them yourself if you agree)\n", checked, settled)
 	}
 }

@@ -53,6 +53,7 @@ func provideReviewPipeline(i do.Injector) (*review.Pipeline, error) {
 		GitManager:    do.MustInvoke[*git.Manager](i),
 		Gatherer:      do.MustInvoke[*review.ContextGatherer](i),
 		Agent:         do.MustInvoke[*reviewer.Agent](i),
+		VerdictAgent:  do.MustInvoke[*replier.Agent](i),
 	}), nil
 }
 

@@ -37,7 +37,7 @@ type ReplyJobStore interface {
 	Create(ctx context.Context, job *ReplyJob) error
 	GetByID(ctx context.Context, id uuid.UUID) (*ReplyJob, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status ReplyJobStatus, errMsg *string) error
-	UpdateCompleted(ctx context.Context, id uuid.UUID, reply string, intent ReplyIntent, signal FeedbackSignal, beforeState, afterState ThreadState) error
+	UpdateCompleted(ctx context.Context, id uuid.UUID, reply string, intent ReplyIntent, verdict ReplyVerdict, signal FeedbackSignal, beforeState, afterState ThreadState) error
 }
 
 type FeedbackStore interface {

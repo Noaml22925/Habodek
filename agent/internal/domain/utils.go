@@ -98,26 +98,6 @@ func DerefThreadState(s *ThreadState) ThreadState {
 	return *s
 }
 
-func ComputeThreadState(current *ThreadState, intent ReplyIntent) (ThreadState, ThreadState) {
-	before := DerefThreadState(current)
-	if before == ThreadStateResolved || before == ThreadStateSuperseded {
-		return before, before
-	}
-
-	switch intent {
-	case IntentAgree:
-		return before, ThreadStatePendingVerification
-	case IntentReject:
-		return before, ThreadStateDismissed
-	case IntentAcknowledge:
-		return before, ThreadStateAcknowledged
-	case IntentQuestion, IntentDiscuss:
-		return before, ThreadStateOpen
-	default:
-		return before, ThreadStateOpen
-	}
-}
-
 func GetIntOr(input ToolInput, key string, def int) int {
 	v, ok := input[key]
 	if !ok {
@@ -134,4 +114,45 @@ func GetIntOr(input ToolInput, key string, def int) int {
 		}
 	}
 	return def
+}
+
+// ThreadStateForVerdict maps a reviewer verdict onto the thread state machine.
+//
+// Note that VerdictFixed yields ThreadStateVerifiedFixed and not
+// ThreadStateResolved: the bot never resolves a GitLab thread, so recording it
+// as resolved would make the store disagree with what a reviewer sees on the MR.
+func ThreadStateForVerdict(current *ThreadState, verdict ReplyVerdict) (before, after ThreadState) {
+	before = DerefThreadState(current)
+	if before == ThreadStateResolved || before == ThreadStateSuperseded {
+		return before, before
+	}
+
+	switch verdict {
+	case VerdictFixed:
+		return before, ThreadStateVerifiedFixed
+	case VerdictWithdrawn:
+		return before, ThreadStateDismissed
+	case VerdictFixIncomplete, VerdictStands, VerdictUnclear:
+		return before, ThreadStateOpen
+	default:
+		return before, ThreadStateOpen
+	}
+}
+
+// SignalForVerdict maps a verdict to the feedback signal the consolidator
+// learns from. A withdrawn finding is the strongest evidence a rule is
+// producing false positives; a verified fix is the strongest evidence it is not.
+//
+// VerdictStands and VerdictUnclear carry no reliable signal on their own --
+// the reviewer maintaining its position says nothing about whether it is right
+// -- so they fall back to what the developer's reply expressed.
+func SignalForVerdict(verdict ReplyVerdict, fallback FeedbackSignal) FeedbackSignal {
+	switch verdict {
+	case VerdictWithdrawn:
+		return FeedbackSignalRejected
+	case VerdictFixed, VerdictFixIncomplete:
+		return FeedbackSignalAccepted
+	default:
+		return fallback
+	}
 }

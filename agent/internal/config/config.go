@@ -84,6 +84,12 @@ type ReviewConfig struct {
 	ChunkThreshold       int    // minimum file count that switches review mode from unified to chunked
 	TriageThreshold      int    // minimum file count that switches review mode from chunked to triage
 	MaxFindings          int    // maximum number of unsuppressed findings posted per review
+	// ThreadVerdicts re-checks every open bot thread against the code at HEAD
+	// after a push and answers it with an explicit verdict. Costs one LLM call
+	// per open thread, so it is capped by MaxVerdictThreads and can be turned
+	// off entirely.
+	ThreadVerdicts    bool
+	MaxVerdictThreads int
 	// StructuredMaxTokens caps the output of each structured-review LLM call.
 	// Too low and the model is cut off mid-JSON and the response fails to
 	// parse; reasoning models need extra headroom because their thinking
@@ -203,6 +209,8 @@ func Load() (*Config, error) {
 	cfg.Review.ChunkThreshold = envIntOrDefault("REVIEW_CHUNK_THRESHOLD", 21)
 	cfg.Review.TriageThreshold = envIntOrDefault("REVIEW_TRIAGE_THRESHOLD", 81)
 	cfg.Review.MaxFindings = envIntOrDefault("REVIEW_MAX_FINDINGS", 10)
+	cfg.Review.ThreadVerdicts = envBoolOrDefault("REVIEW_THREAD_VERDICTS", true)
+	cfg.Review.MaxVerdictThreads = envIntOrDefault("REVIEW_MAX_VERDICT_THREADS", 20)
 	cfg.Review.StructuredMaxTokens = envIntOrDefault("REVIEW_STRUCTURED_MAX_TOKENS", 8192)
 
 	cfg.Tool.ReadFileMaxKB = envIntOrDefault("TOOL_READ_FILE_MAX_KB", 30)
@@ -363,4 +371,17 @@ func envFloatOrDefault(key string, defaultVal float64) float64 {
 		return defaultVal
 	}
 	return f
+}
+
+func envBoolOrDefault(key string, defaultVal bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		slog.Warn("invalid bool config, using default", "key", key, "value", v, "default", defaultVal)
+		return defaultVal
+	}
+	return b
 }

@@ -78,6 +78,10 @@ const (
 	ThreadStateResolved            ThreadState = "resolved"
 	ThreadStateDismissed           ThreadState = "dismissed"
 	ThreadStateSuperseded          ThreadState = "superseded"
+	// ThreadStateVerifiedFixed means the reviewer re-read the code and confirmed
+	// the finding is addressed. The GitLab thread is deliberately left open --
+	// resolving it is the developer's call, not the bot's.
+	ThreadStateVerifiedFixed ThreadState = "verified_fixed"
 )
 
 type RiskTier string
@@ -100,3 +104,35 @@ const (
 	DefaultPolicyVersion    = "review-policy-v1"
 	DefaultModelPlanVersion = "review-model-plan-v1"
 )
+
+// ReplyVerdict is the reviewer's own conclusion about one of its findings,
+// decided by the model rather than inferred from keywords in the developer's
+// reply. It is what closes an argument: the reviewer either stands by the
+// finding, withdraws it, or confirms the code now fixes it.
+type ReplyVerdict string
+
+const (
+	// VerdictStands — the finding still applies; the developer's argument or
+	// fix does not address it.
+	VerdictStands ReplyVerdict = "stands"
+	// VerdictWithdrawn — the developer is right and the finding was wrong.
+	VerdictWithdrawn ReplyVerdict = "withdrawn"
+	// VerdictFixed — the current code genuinely resolves the finding.
+	VerdictFixed ReplyVerdict = "fixed"
+	// VerdictFixIncomplete — the code changed and helps, but part of the
+	// original concern survives.
+	VerdictFixIncomplete ReplyVerdict = "fix_incomplete"
+	// VerdictUnclear — not enough information to decide either way. Said out
+	// loud rather than defaulted to agreement.
+	VerdictUnclear ReplyVerdict = "unclear"
+)
+
+// ValidReplyVerdict reports whether v is a verdict the pipeline understands.
+func ValidReplyVerdict(v ReplyVerdict) bool {
+	switch v {
+	case VerdictStands, VerdictWithdrawn, VerdictFixed, VerdictFixIncomplete, VerdictUnclear:
+		return true
+	default:
+		return false
+	}
+}

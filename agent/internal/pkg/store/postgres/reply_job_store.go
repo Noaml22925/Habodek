@@ -81,14 +81,14 @@ func (s *ReplyJobStore) UpdateStatus(ctx context.Context, id uuid.UUID, status d
 	return nil
 }
 
-func (s *ReplyJobStore) UpdateCompleted(ctx context.Context, id uuid.UUID, reply string, intent domain.ReplyIntent, signal domain.FeedbackSignal, beforeState, afterState domain.ThreadState) error {
+func (s *ReplyJobStore) UpdateCompleted(ctx context.Context, id uuid.UUID, reply string, intent domain.ReplyIntent, verdict domain.ReplyVerdict, signal domain.FeedbackSignal, beforeState, afterState domain.ThreadState) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE reply_jobs SET
 			status = $1, reply_content = $2, intent_classified = $3,
 			feedback_signal = $4, thread_state_before = $5, thread_state_after = $6,
-			completed_at = NOW(), updated_at = NOW()
-		WHERE id = $7`,
-		domain.ReplyJobStatusCompleted, reply, intent, signal, beforeState, afterState, id)
+			reviewer_verdict = $7, completed_at = NOW(), updated_at = NOW()
+		WHERE id = $8`,
+		domain.ReplyJobStatusCompleted, reply, intent, signal, beforeState, afterState, verdict, id)
 	if err != nil {
 		return fmt.Errorf("update reply completed: %w", err)
 	}

@@ -55,8 +55,12 @@ Reviews are **label-triggered**, not automatic on push — add `ai-review`
 somebody asks. The CLI bypasses the label check and always reviews.
 
 Replies are handled automatically: when a human comments in one of the agent's own
-threads, the replier agent wakes up with the thread history and surrounding code.
-Threads auto-resolve when modified lines overlap a prior comment.
+threads, the replier agent wakes up with the thread history and the code at HEAD,
+and answers with a verdict on its own finding — it stands, it is withdrawn, or the
+code now fixes it. After a push, every open thread gets the same treatment against
+the new code (`REVIEW_THREAD_VERDICTS`).
+
+The agent never resolves a thread. It states a conclusion; you decide.
 
 ## Cost and size controls
 
@@ -67,12 +71,20 @@ Threads auto-resolve when modified lines overlap a prior comment.
 | `REVIEW_CHUNK_THRESHOLD` | 21 | File count that switches unified → chunked review |
 | `REVIEW_TRIAGE_THRESHOLD` | 81 | File count that switches chunked → triage |
 | `REVIEW_MAX_PARALLEL_CHUNKS` | 5 | Concurrency, and therefore burst token spend |
-| `REVIEW_MAX_FINDINGS` | — | Hard cap on comments posted per review |
+| `REVIEW_MAX_FINDINGS` | 10 | Hard cap on comments posted per review |
+| `REVIEW_THREAD_VERDICTS` | `true` | Re-check open threads after a push; one LLM call each |
+| `REVIEW_MAX_VERDICT_THREADS` | 20 | Ceiling on re-checks per review |
 | `LLM_CONTEXT_COMPRESSION_THRESHOLD` | 0.55 | Fraction of context before compression |
 
 `REVIEW_MAX_FINDINGS` is the noise dial. Start it low. A reviewer that posts thirty
 threads on one MR gets muted within a fortnight, and a muted reviewer reviews
 nothing.
+
+The cap ranks before it cuts — severity, then confidence, then file risk — so
+criticals survive it. What it does not do is defer: a finding cut by the budget
+is gone, because the next review diffs from this head and never revisits those
+lines. `go run ./cmd/cli findings --project-id <id> --mr-id <iid>` shows what was
+dropped and by which filter.
 
 ## Where things are
 

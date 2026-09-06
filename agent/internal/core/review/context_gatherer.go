@@ -135,9 +135,13 @@ func (g *ContextGatherer) Gather(ctx context.Context, job *domain.ReviewJob, dif
 
 		if firstNote.AuthorID == g.botUserID && firstNote.Position != nil {
 			rc.BotUnresolvedComments = append(rc.BotUnresolvedComments, domain.BotUnresolvedComment{
-				DiscussionID: d.ID,
-				FilePath:     firstNote.Position.FilePath,
-				LineNumber:   firstNote.Position.NewLine,
+				DiscussionID:  d.ID,
+				NoteID:        firstNote.ID,
+				FilePath:      firstNote.Position.FilePath,
+				LineNumber:    firstNote.Position.NewLine,
+				Body:          firstNote.Body,
+				ThreadHistory: formatThreadHistory(d.Notes),
+				LastNoteByBot: d.Notes[len(d.Notes)-1].AuthorID == g.botUserID,
 			})
 		}
 	}
@@ -219,4 +223,15 @@ func detectFramework(files []domain.DiffFile, override *string) string {
 		}
 	}
 	return ""
+}
+
+// formatThreadHistory renders a discussion for the re-check prompt. Replies
+// after the first note are the developer's side of the argument, which the
+// verdict pass has to weigh rather than ignore.
+func formatThreadHistory(notes []domain.GitLabNote) string {
+	var sb strings.Builder
+	for _, n := range notes {
+		sb.WriteString(fmt.Sprintf("[%s] %s\n\n", n.AuthorName, n.Body))
+	}
+	return sb.String()
 }

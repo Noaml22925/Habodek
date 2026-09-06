@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS reply_jobs (
     feedback_signal         VARCHAR(20),
     thread_state_before     VARCHAR(32),
     thread_state_after      VARCHAR(32),
+    reviewer_verdict        VARCHAR(32),
     error_message           TEXT,
     queued_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     started_at              TIMESTAMPTZ,
@@ -122,6 +123,7 @@ CREATE TABLE IF NOT EXISTS reply_jobs (
 );
 ALTER TABLE reply_jobs ADD COLUMN IF NOT EXISTS thread_state_before VARCHAR(32);
 ALTER TABLE reply_jobs ADD COLUMN IF NOT EXISTS thread_state_after VARCHAR(32);
+ALTER TABLE reply_jobs ADD COLUMN IF NOT EXISTS reviewer_verdict VARCHAR(32);
 CREATE INDEX IF NOT EXISTS idx_reply_jobs_project ON reply_jobs(gitlab_project_id, mr_iid);
 CREATE INDEX IF NOT EXISTS idx_reply_jobs_status ON reply_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_reply_jobs_discussion ON reply_jobs(discussion_id);

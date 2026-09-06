@@ -15,13 +15,21 @@ import (
 )
 
 type fakeReplyAgent struct {
-	reply     string
-	lastInput replier.ReplyInput
+	reply string
+	// verdict is only honoured when verdictParsed is set, mirroring a model
+	// that actually returned the required JSON.
+	verdict       domain.ReplyVerdict
+	verdictParsed bool
+	lastInput     replier.ReplyInput
 }
 
-func (a *fakeReplyAgent) GenerateReply(_ context.Context, _ domain.LLMClient, input replier.ReplyInput) (string, error) {
+func (a *fakeReplyAgent) GenerateReply(_ context.Context, _ domain.LLMClient, input replier.ReplyInput) (replier.ReplyResult, error) {
 	a.lastInput = input
-	return a.reply, nil
+	return replier.ReplyResult{
+		Verdict:       a.verdict,
+		Reply:         a.reply,
+		VerdictParsed: a.verdictParsed,
+	}, nil
 }
 
 type fakeReplyRepoManager struct {
@@ -74,6 +82,7 @@ type fakeReplyJobStore struct {
 	updateCompletedCalls  int
 	lastCompletedIntent   domain.ReplyIntent
 	lastCompletedSignal   domain.FeedbackSignal
+	lastCompletedVerdict  domain.ReplyVerdict
 	lastThreadStateBefore domain.ThreadState
 	lastThreadStateAfter  domain.ThreadState
 }
@@ -86,7 +95,8 @@ func (s *fakeReplyJobStore) UpdateStatus(_ context.Context, _ uuid.UUID, status 
 	s.statuses = append(s.statuses, status)
 	return nil
 }
-func (s *fakeReplyJobStore) UpdateCompleted(_ context.Context, _ uuid.UUID, _ string, intent domain.ReplyIntent, signal domain.FeedbackSignal, beforeState, afterState domain.ThreadState) error {
+func (s *fakeReplyJobStore) UpdateCompleted(_ context.Context, _ uuid.UUID, _ string, intent domain.ReplyIntent, verdict domain.ReplyVerdict, signal domain.FeedbackSignal, beforeState, afterState domain.ThreadState) error {
+	s.lastCompletedVerdict = verdict
 	s.updateCompletedCalls++
 	s.lastCompletedIntent = intent
 	s.lastCompletedSignal = signal
@@ -396,7 +406,7 @@ func TestPipelineExecuteDoesNotAutoResolveAcknowledgeOrRejectReplies(t *testing.
 	}
 }
 
-func TestPipelineExecutePersistsThreadStateTransition(t *testing.T) {
+func TestPipelineExecuteRecordsVerifiedFixedWhenTheReviewerConfirmsTheFix(t *testing.T) {
 	replyStore := &fakeReplyJobStore{}
 	feedbackStore := &fakeReplyFeedbackStore{
 		feedback: &domain.ReviewFeedback{ThreadState: domain.Ptr(domain.ThreadStateOpen)},
@@ -418,8 +428,12 @@ func TestPipelineExecutePersistsThreadStateTransition(t *testing.T) {
 		RepoSettings:  &fakeReplyRepoSettingsStore{},
 		FeedbackStore: feedbackStore,
 		GitLabClient:  gitlabClient,
-		ReplyAgent:    &fakeReplyAgent{reply: "thanks"},
-		RepoManager:   &fakeReplyRepoManager{},
+		ReplyAgent: &fakeReplyAgent{
+			reply:         "Confirmed — the query is parameterised now.",
+			verdict:       domain.VerdictFixed,
+			verdictParsed: true,
+		},
+		RepoManager: &fakeReplyRepoManager{},
 	})
 
 	job := &domain.ReplyJob{
@@ -438,15 +452,19 @@ func TestPipelineExecutePersistsThreadStateTransition(t *testing.T) {
 	if replyStore.lastThreadStateBefore != domain.ThreadStateOpen {
 		t.Fatalf("before state = %q, want %q", replyStore.lastThreadStateBefore, domain.ThreadStateOpen)
 	}
-	if replyStore.lastThreadStateAfter != domain.ThreadStatePendingVerification {
-		t.Fatalf("after state = %q, want %q", replyStore.lastThreadStateAfter, domain.ThreadStatePendingVerification)
+	if replyStore.lastThreadStateAfter != domain.ThreadStateVerifiedFixed {
+		t.Fatalf("after state = %q, want %q", replyStore.lastThreadStateAfter, domain.ThreadStateVerifiedFixed)
 	}
-	if feedbackStore.lastUpdatedThreadState != domain.ThreadStatePendingVerification {
-		t.Fatalf("feedback thread state = %q, want %q", feedbackStore.lastUpdatedThreadState, domain.ThreadStatePendingVerification)
+	if feedbackStore.lastUpdatedThreadState != domain.ThreadStateVerifiedFixed {
+		t.Fatalf("feedback thread state = %q, want %q", feedbackStore.lastUpdatedThreadState, domain.ThreadStateVerifiedFixed)
+	}
+	// Verified is not resolved: closing the thread stays the developer's call.
+	if gitlabClient.resolveDiscussionCalls != 0 {
+		t.Fatalf("ResolveDiscussion() calls = %d, want 0", gitlabClient.resolveDiscussionCalls)
 	}
 }
 
-func TestPipelineExecutePersistsDismissedThreadStateForReject(t *testing.T) {
+func TestPipelineExecuteDismissesTheThreadWhenTheReviewerWithdrawsItsFinding(t *testing.T) {
 	replyStore := &fakeReplyJobStore{}
 	feedbackStore := &fakeReplyFeedbackStore{
 		feedback: &domain.ReviewFeedback{ThreadState: domain.Ptr(domain.ThreadStateOpen)},
@@ -468,7 +486,11 @@ func TestPipelineExecutePersistsDismissedThreadStateForReject(t *testing.T) {
 		RepoSettings:  &fakeReplyRepoSettingsStore{},
 		FeedbackStore: feedbackStore,
 		GitLabClient:  gitlabClient,
-		ReplyAgent:    &fakeReplyAgent{reply: "understood"},
+		ReplyAgent: &fakeReplyAgent{
+			reply:         "You're right, the caller already validates this. Withdrawing.",
+			verdict:       domain.VerdictWithdrawn,
+			verdictParsed: true,
+		},
 		RepoManager:   &fakeReplyRepoManager{},
 	})
 
@@ -488,9 +510,15 @@ func TestPipelineExecutePersistsDismissedThreadStateForReject(t *testing.T) {
 	if replyStore.lastThreadStateAfter != domain.ThreadStateDismissed {
 		t.Fatalf("after state = %q, want %q", replyStore.lastThreadStateAfter, domain.ThreadStateDismissed)
 	}
+	// A withdrawn finding is the clearest false-positive signal there is.
+	if replyStore.lastCompletedSignal != domain.FeedbackSignalRejected {
+		t.Fatalf("signal = %q, want %q", replyStore.lastCompletedSignal, domain.FeedbackSignalRejected)
+	}
 }
 
-func TestPipelineExecutePersistsAcknowledgedThreadState(t *testing.T) {
+// A model that ignores the JSON format still gets its prose posted, but it
+// does not get to claim a conclusion it never stated: the thread stays open.
+func TestPipelineExecuteLeavesTheThreadOpenWhenTheModelReturnsNoVerdict(t *testing.T) {
 	replyStore := &fakeReplyJobStore{}
 	feedbackStore := &fakeReplyFeedbackStore{
 		feedback: &domain.ReviewFeedback{ThreadState: domain.Ptr(domain.ThreadStateOpen)},
@@ -529,8 +557,14 @@ func TestPipelineExecutePersistsAcknowledgedThreadState(t *testing.T) {
 	if err := pipeline.Execute(context.Background(), job); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if replyStore.lastThreadStateAfter != domain.ThreadStateAcknowledged {
-		t.Fatalf("after state = %q, want %q", replyStore.lastThreadStateAfter, domain.ThreadStateAcknowledged)
+	if gitlabClient.postReplyCalls != 1 {
+		t.Fatalf("PostReply() calls = %d, want 1", gitlabClient.postReplyCalls)
+	}
+	if replyStore.lastThreadStateAfter != domain.ThreadStateOpen {
+		t.Fatalf("after state = %q, want %q", replyStore.lastThreadStateAfter, domain.ThreadStateOpen)
+	}
+	if replyStore.lastCompletedVerdict != domain.VerdictStands {
+		t.Fatalf("verdict = %q, want %q from the fallback", replyStore.lastCompletedVerdict, domain.VerdictStands)
 	}
 }
 

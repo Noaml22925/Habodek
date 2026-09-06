@@ -104,22 +104,17 @@ func writeFile(t *testing.T, repoPath, relPath, content string) {
 	}
 }
 
-func TestNearModifiedLineToleratesTheGapBetweenACommentAndItsFix(t *testing.T) {
-	// The live failure this exists to prevent: the bot anchored an SQL-injection
-	// thread on line 8, the `def`, while the parameterised-query fix landed on
-	// lines 9-10. An exact match left the thread open after a correct fix.
-	added := map[int]bool{9: true, 10: true}
 
-	if !nearModifiedLine(added, 8) {
-		t.Error("a fix one line from the anchored comment should resolve the thread")
+func TestNeedsVerdictStaysQuietWhenNothingMoved(t *testing.T) {
+	// The failure this prevents is the bot restating itself on every push: an
+	// MR with six open threads would collect six comments per commit.
+	if needsVerdict(false, true) {
+		t.Error("an untouched file the bot already spoke about needs no new verdict")
 	}
-	if !nearModifiedLine(added, 12) {
-		t.Error("a fix two lines from the anchored comment should resolve the thread")
+	if !needsVerdict(true, true) {
+		t.Error("a changed file must be re-checked even if the bot spoke last")
 	}
-	if nearModifiedLine(added, 20) {
-		t.Error("an unrelated change elsewhere in the file must not resolve the thread")
-	}
-	if nearModifiedLine(map[int]bool{}, 8) {
-		t.Error("a file with no added lines must not resolve anything")
+	if !needsVerdict(false, false) {
+		t.Error("a developer reply must be answered even if the file did not change")
 	}
 }

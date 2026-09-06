@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,7 @@ func main() {
 	}
 
 	rootCmd.AddCommand(reviewCmd())
+	rootCmd.AddCommand(findingsCmd())
 	rootCmd.AddCommand(cloneAllCmd())
 
 	if err := rootCmd.Execute(); err != nil {
@@ -480,4 +482,171 @@ func parseSelection(input string, max int) ([]int, error) {
 	}
 
 	return result, nil
+}
+
+// findingsCmd answers the question the summary comment cannot: of everything
+// the model found, what never made it onto the MR, and which filter ate it.
+//
+// Every finding is persisted with its DropReason before posting, so this reads
+// the stored job rather than re-running a review.
+func findingsCmd() *cobra.Command {
+	var projectID int64
+	var mrID int64
+	var showAll bool
+	var limit int
+
+	cmd := &cobra.Command{
+		Use:   "findings",
+		Short: "Show what the last review found and why findings were dropped",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			injector := do.New(
+				di.ConfigPackage,
+				di.InfraPackage,
+				di.CorePackage,
+			)
+
+			stores := do.MustInvoke[*store.Stores](injector)
+			defer stores.Close()
+
+			ctx := context.Background()
+
+			jobs, err := stores.ReviewJobs.ListByProject(ctx, projectID, limit)
+			if err != nil {
+				return fmt.Errorf("list review jobs: %w", err)
+			}
+
+			var job *domain.ReviewJob
+			for _, j := range jobs {
+				if j.MrIID == mrID && len(j.AIOutputParsed) > 0 {
+					job = j
+					break
+				}
+			}
+			if job == nil {
+				fmt.Printf("No stored review with findings for MR !%d in the last %d jobs of project %d.\n", mrID, limit, projectID)
+				fmt.Println("Raise --limit if the review you want is older than that.")
+				return nil
+			}
+
+			var comments []domain.ParsedComment
+			if err := json.Unmarshal(job.AIOutputParsed, &comments); err != nil {
+				return fmt.Errorf("parse stored findings: %w", err)
+			}
+
+			printFindingsBreakdown(job, comments, showAll)
+			return nil
+		},
+	}
+
+	cmd.Flags().Int64Var(&projectID, "project-id", 0, "GitLab project ID")
+	cmd.Flags().Int64Var(&mrID, "mr-id", 0, "Merge request IID")
+	cmd.Flags().BoolVar(&showAll, "all", false, "List every finding individually, not just the counts")
+	cmd.Flags().IntVar(&limit, "limit", 50, "How many recent jobs of this project to search for the MR")
+	cmd.MarkFlagRequired("project-id")
+	cmd.MarkFlagRequired("mr-id")
+
+	return cmd
+}
+
+func printFindingsBreakdown(job *domain.ReviewJob, comments []domain.ParsedComment, showAll bool) {
+	severityOrder := []domain.CommentSeverity{
+		domain.SeverityCritical, domain.SeverityHigh, domain.SeverityMedium, domain.SeverityLow,
+	}
+
+	posted := 0
+	// dropped[reason][severity]
+	dropped := map[string]map[domain.CommentSeverity]int{}
+	reasons := []string{}
+	for _, c := range comments {
+		if !c.Suppressed {
+			posted++
+			continue
+		}
+		reason := c.DropReason
+		if reason == "" {
+			reason = "(unrecorded)"
+		}
+		if _, ok := dropped[reason]; !ok {
+			dropped[reason] = map[domain.CommentSeverity]int{}
+			reasons = append(reasons, reason)
+		}
+		dropped[reason][c.Severity]++
+	}
+	sort.Strings(reasons)
+
+	fmt.Printf("\nJob %s — MR !%d, %s\n", job.ID, job.MrIID, job.Status)
+	fmt.Printf("Model: %s   Budget: %d   Base: %s → %s\n",
+		domain.DerefStr(job.ModelUsed), domain.DerefInt(job.FindingsBudget),
+		shortSHA(domain.DerefStr(job.BaseSHA)), shortSHA(job.HeadSHA))
+	fmt.Println(strings.Repeat("─", 72))
+	fmt.Printf("Model emitted %d findings — %d posted, %d dropped.\n\n", len(comments), posted, len(comments)-posted)
+
+	if len(reasons) == 0 {
+		fmt.Println("Nothing was dropped.")
+		return
+	}
+
+	fmt.Printf("%-26s %9s %6s %7s %7s %6s\n", "DROP REASON", "critical", "high", "medium", "low", "total")
+	for _, reason := range reasons {
+		bySeverity := dropped[reason]
+		total := 0
+		for _, n := range bySeverity {
+			total += n
+		}
+		fmt.Printf("%-26s %9d %6d %7d %7d %6d\n", reason,
+			bySeverity[domain.SeverityCritical], bySeverity[domain.SeverityHigh],
+			bySeverity[domain.SeverityMedium], bySeverity[domain.SeverityLow], total)
+	}
+
+	// The two that most often hide a real bug: a finding on a line the diff did
+	// not add, and one the budget cut. Neither is ever re-offered on the next
+	// incremental review, so they are lost rather than deferred.
+	lostHighValue := 0
+	for _, c := range comments {
+		if !c.Suppressed {
+			continue
+		}
+		if c.DropReason != "invalid_line" && c.DropReason != "findings_budget" {
+			continue
+		}
+		if c.Severity == domain.SeverityCritical || c.Severity == domain.SeverityHigh {
+			lostHighValue++
+		}
+	}
+	if lostHighValue > 0 {
+		fmt.Printf("\n⚠  %d critical/high finding(s) dropped as invalid_line or findings_budget.\n", lostHighValue)
+		fmt.Println("   These are not deferred — the next incremental review diffs from this head")
+		fmt.Println("   and will not look at those lines again. Re-run with --all to read them.")
+	}
+
+	if !showAll {
+		fmt.Println("\nRe-run with --all to list each finding.")
+		return
+	}
+
+	fmt.Println("\n" + strings.Repeat("─", 72))
+	for _, severity := range severityOrder {
+		for _, c := range comments {
+			if c.Severity != severity {
+				continue
+			}
+			status := "posted"
+			if c.Suppressed {
+				status = "dropped: " + c.DropReason
+			}
+			fmt.Printf("\n[%s/%s] %s:%d (%s)\n  %s\n",
+				c.Severity, c.Confidence, c.FilePath, c.LineNumber, status,
+				domain.Truncate(c.ReviewComment, 300))
+		}
+	}
+}
+
+func shortSHA(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	if sha == "" {
+		return "(none)"
+	}
+	return sha
 }

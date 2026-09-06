@@ -15,7 +15,7 @@ import (
 )
 
 type replyGenerator interface {
-	GenerateReply(ctx context.Context, llmClient domain.LLMClient, input replier.ReplyInput) (string, error)
+	GenerateReply(ctx context.Context, llmClient domain.LLMClient, input replier.ReplyInput) (replier.ReplyResult, error)
 }
 
 type repoSyncer interface {
@@ -95,10 +95,11 @@ func (p *Pipeline) Execute(ctx context.Context, job *domain.ReplyJob) error {
 			return p.failJob(ctx, job, "sync latest repository state: "+err.Error())
 		}
 
+		// Always hand the model the code as it stands now. Gating this on the
+		// keyword-derived intent meant "I disagree, but I changed it anyway"
+		// was argued about instead of verified.
 		codeContext = p.readFileLinesAtSHA(ctx, job.GitLabProjectID, mr.HeadSHA, *job.BotCommentFilePath, *job.BotCommentLine)
-		if intent == domain.IntentAgree || intent == domain.IntentAcknowledge {
-			latestCodeContext = codeContext
-		}
+		latestCodeContext = codeContext
 	}
 
 	var modelOverride *string
@@ -121,9 +122,23 @@ func (p *Pipeline) Execute(ctx context.Context, job *domain.ReplyJob) error {
 		ResponseLanguage:  prompt.ParseLanguage(p.cfg.Review.ResponseLanguage),
 	}
 
-	replyText, err := p.replyAgent.GenerateReply(ctx, llmClient, replyInput)
+	result, err := p.replyAgent.GenerateReply(ctx, llmClient, replyInput)
 	if err != nil {
 		return p.failJob(ctx, job, "generate reply: "+err.Error())
+	}
+
+	replyText := result.Reply
+	if strings.TrimSpace(replyText) == "" {
+		return p.failJob(ctx, job, "generate reply: model returned an empty reply")
+	}
+
+	// The verdict is the reviewer's own conclusion. Only when the model fails
+	// to produce one do we fall back to guessing from the developer's wording.
+	verdict := result.Verdict
+	if !result.VerdictParsed {
+		verdict = verdictFromIntent(intent)
+		log.Warn("reply had no parseable verdict; inferred one from the developer's wording",
+			"inferred_verdict", verdict, "intent", intent)
 	}
 
 	_, err = p.gitlabClient.PostReply(ctx, job.GitLabProjectID, job.MrIID, job.DiscussionID, replyText)
@@ -135,10 +150,11 @@ func (p *Pipeline) Execute(ctx context.Context, job *domain.ReplyJob) error {
 	if err != nil {
 		log.Warn("failed to load feedback for thread state", "bot_comment_id", job.BotCommentID, "error", err)
 	}
-	beforeState, afterState := domain.ComputeThreadState(nil, intent)
+	beforeState, afterState := domain.ThreadStateForVerdict(nil, verdict)
 	if feedback != nil {
-		beforeState, afterState = domain.ComputeThreadState(feedback.ThreadState, intent)
+		beforeState, afterState = domain.ThreadStateForVerdict(feedback.ThreadState, verdict)
 	}
+	signal = domain.SignalForVerdict(verdict, signal)
 
 	if err := p.feedbackStore.UpdateSignal(ctx, job.BotCommentID, signal, job.TriggerNoteContent, afterState); err != nil {
 		log.Warn("failed to update feedback signal", "bot_comment_id", job.BotCommentID, "error", err)
@@ -150,7 +166,7 @@ func (p *Pipeline) Execute(ctx context.Context, job *domain.ReplyJob) error {
 		}
 	}
 
-	if err := p.replyJobStore.UpdateCompleted(ctx, job.ID, replyText, intent, signal, beforeState, afterState); err != nil {
+	if err := p.replyJobStore.UpdateCompleted(ctx, job.ID, replyText, intent, verdict, signal, beforeState, afterState); err != nil {
 		log.Error("reply posted but failed to persist completion; manual reconciliation required",
 			"error", err)
 		return nil
@@ -158,9 +174,26 @@ func (p *Pipeline) Execute(ctx context.Context, job *domain.ReplyJob) error {
 
 	job.ThreadStateBefore = domain.Ptr(beforeState)
 	job.ThreadStateAfter = domain.Ptr(afterState)
+	job.ReviewerVerdict = domain.Ptr(verdict)
 
-	log.Info("reply posted", "intent", intent, "signal", signal)
+	log.Info("reply posted", "intent", intent, "verdict", verdict, "signal", signal,
+		"thread_state", afterState, "verdict_from_model", result.VerdictParsed)
 	return nil
+}
+
+// verdictFromIntent is the degraded path for a model that ignored the output
+// format. It reads the developer's words rather than the code, which is
+// exactly what the verdict exists to stop doing -- so it is a fallback only.
+func verdictFromIntent(intent domain.ReplyIntent) domain.ReplyVerdict {
+	switch intent {
+	case domain.IntentAgree:
+		// "fixed"/"done" is a claim, not a verified fix.
+		return domain.VerdictUnclear
+	case domain.IntentReject, domain.IntentQuestion, domain.IntentDiscuss:
+		return domain.VerdictStands
+	default:
+		return domain.VerdictStands
+	}
 }
 
 func (p *Pipeline) failJob(ctx context.Context, job *domain.ReplyJob, msg string) error {
