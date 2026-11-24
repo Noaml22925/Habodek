@@ -11,7 +11,7 @@ diff lines, answers reviewer replies, and re-checks its own threads after a fix
 
 ---
 
-## Current state — 2026-11-24: reviewer v2 being built; M0-M10 done, next is M11
+## Current state — 2026-11-24: reviewer v2 being built; M0-M11 done, next is M12
 
 **If you are the session that builds v2, start with
 [`docs/reviewer-v2-handoff.md`](docs/reviewer-v2-handoff.md).** It is the
@@ -72,12 +72,52 @@ after M6 and M7 settle it.
 
 **Progress log (newest first).**
 
-- **M11 in progress (2026-11-24, branch `habodek-brain-rework`).** Landed: `run.json`
-  per run (job, every root's SHA, prompt hashes, roles, memory commit, sandbox);
-  findings keep their hypothesis id; `metrics.json` (the funnel per lens); `trace show`
-  (static HTML); `replay` (cassette, live from a stage, another model; recorded sandbox
-  runs); `probe`. Still to land: acceptance metrics and automatic bar-raising in the
-  control plane. Details when M11 is done.
+- **M11 done (2026-11-24, branch `habodek-brain-rework`).** Observability: every
+  "why did it say / miss that?" has an answer that does not need the gateway.
+  - **Inputs:** `run.json` per run (`trace/runinfo.py`): the job, every workspace root
+    with its commit and repository, brain version, role → model map, a hash of every
+    role prompt, the memory commit, the sandbox backend. Findings keep the hypothesis
+    id they grew from (`Finding.hypothesis`); the triage event lists the hypotheses;
+    `metrics.json` is the funnel per lens (raised → investigated → confirmed →
+    checked → upheld → posted) and where the rest were dropped.
+  - **`trace show RUN`** (`habodek-brain trace show`, also `habodek trace show`;
+    `trace/view.py`): one static HTML file, no JavaScript, everything escaped — run
+    header, outcome, funnel, the hypothesis tree (investigation verdict and chain,
+    checks, both verifiers' arguments, evidence and sandbox witnesses, where it ended)
+    linked to each agent's transcript (reasoning, tool calls and results, conclusion),
+    stages, sandbox runs, team rules, raised bars, the evidence pack.
+  - **`replay RUN`** (`trace/replay.py`): rebuilds the worktrees from `run.json`'s SHAs
+    (the control plane deletes them after a job) and answers requests from the run's
+    recorded traffic (`events.jsonl`, or the proxy's `llm-proxy.jsonl`), matched on
+    the conversation's decisions, not tool-result text. A pure replay that misses
+    names the first divergence (role, turn) and exits 1; `--from-stage S` and
+    `--model ROLE=MODEL` send those requests live; sandbox runs are served from the
+    recorded `runs/*.txt`. Pure replays skip the client rate limiter.
+  - **`probe RUN --hypothesis "…"`**: one investigator on a stated idea in the run's
+    workspace and evidence pack, optionally `--verify`, then whether the original run
+    raised it — "not hypothesised" (the finders missed it) vs where it was dropped.
+    Prints ≤ 20 lines.
+  - **Acceptance and raised bars** (Go, `orchestrator/acceptance.go`): per project
+    and category (primary lens), over the last 50 posted findings: fixed /
+    fix_incomplete / stands accepted, withdrawn rejected, unclear / need_info / open
+    not counted. After 5 decided threads, below 50% → that category posts major+,
+    below 25% → critical only. Review jobs carry the bars as `policy`; every raise is
+    logged; the brain holds back below-bar findings (`dropped_at: bar`, with the
+    acceptance) before the judge and says so in the summary. `GET
+    /internal/metrics?project=ID`, `cli metrics --project ID`, `HABODEK_BARS=off`.
+  - Tests: 241 Python (run.json, funnel, a bar holding back S1, the viewer and its
+    escaping, pure replay identical after the worktrees are deleted, a broken cassette
+    naming its divergence, live-from-a-stage and model-swap replays, a replay with
+    recorded sandbox runs, probe); Go: acceptance and bars, job policy, metrics
+    endpoint, the policy golden; `HABODEK_E2E=1` checks every control-plane run's
+    `run.json` and renders the review with `trace show`.
+  - *Learned:* the first cut of pure replay took 30 s per run because the brain's
+    client-side limiter (25 RPM) paced requests that never left the process.
+  - *Not covered:* per-repository metrics are per category only — there is no
+    dashboard, and the bar never posts *more* than the default policy.
+  - Also on this branch: `prompts/reviewer-upgrade.md` (the original upgrade brief,
+    from `claude/clever-cray-f52d18`) merged in; the root README rewritten for v2;
+    `HANDOFF.md` / `DEPLOY.md` marked as v1 until M12 rewrites them.
 
 - **M10 done (2026-11-24).** Memory: reviews no longer start from zero.
   - `habodek-memory`: a git repo of markdown (`habodek/brain/memory/store.py`),
@@ -799,14 +839,18 @@ replaced the design doc's R0-R6):
       scenarios, scorer, scorecard, Claude Code references · [x] **M6** review
       workflow (S1-S4 scorecard to offer) · [x] **M7** thread agent (S5-S9) · [x]
       **M8** into the Go control plane, old brain deleted · [x] **M9** sandboxed
-      execution (Docker backend not yet run on a real daemon) · [x] **M10** memory · [ ] **M11** observability · [ ] **M12** offline delivery,
-      egress test → the owner's final test
+      execution (Docker backend not yet run on a real daemon) · [x] **M10** memory ·
+      [x] **M11** observability · [ ] **M12** offline delivery, egress test → the
+      owner's final test
 
 ---
 
 ## Next up
 
-**v2 (2026-11-24, after M10): M11, observability** (handoff §7). Still outstanding with the
+**v2 (2026-11-24, after M11): M12, offline delivery and the egress test** (handoff
+§7). Work only on branch `habodek-brain-rework`. The VPN Artifactory proxies PyPI and
+Docker base images, so every image builds on the VPN host; rewrite `HANDOFF.md` and
+`DEPLOY.md` for v2. Still outstanding with the
 owner, none blocking: the M1 gateway probe result, and the S1-S9 scorecard offer
 (`habodek-brain scorecard --scenarios 1-9 --runs 3`; with M9 it uses the local
 sandbox where `unshare` works, and says so in its header). Do not block on the
@@ -1142,31 +1186,45 @@ tests/fixtures/chat_templates/
                          (from SGLang, pinned HF revisions), for offline tests of
                          how the brain shapes messages.
 
-agent/
-  NOTICE.md              Fork provenance + running list of our changes. Update it.
-  README.md              Our config: LiteLLM, GitLab, cost controls, maintenance.
-  README.upstream.md     Original author's docs — still the best feature reference.
-  internal/config/       Every env var; defaultContextWindows lives here.
-  internal/pkg/llm/      openai.go (hand-rolled net/http), anthropic, google,
-                         balancer, retry. baseURL is a constructor parameter.
-  internal/pkg/tools/    read_file, search_code, read_multi_file.
-  internal/pkg/gitlab/   discussions, notes, ResolveDiscussion.
-  internal/core/prompt/  THE PROMPTS. Plain Go string constants containing
-                         markdown — edit as text, no Go needed.
-  internal/core/review/  pipeline, planner, risk scoring, chunking, output parsing.
-  internal/core/reply/   intent classification + reply pipeline.
-  internal/core/agents/  reviewer/ and replier/.
-  internal/handler/      webhook, worker pool, cron (feedback consolidation).
-  internal/pkg/store/    file / sqlite / postgres.
-  cmd/server, cmd/cli    webhook server; interactive dry-run review + clone-all.
-  .env                   Local config, gitignored. Two FILL-ME GitLab values.
+habodek/brain/            THE BRAIN (Python, `habodek-brain`): one subprocess per job.
+  contract.py            job.json / result.json (Go mirrors it: agent/internal/core/brain).
+  llm/                   client, per-model shaping rules (models.yaml), limiter,
+                         the scripted fake gateway.
+  codeintel/             workspace roots, read/grep, tree-sitter tags, references,
+                         change map, repo map, jedi, dependency source (pydeps).
+  runtime/               the agent loop, tools, compaction.
+  workflow/              the review pipeline, evidence packs and checks, role
+                         prompts (roles/*.md), comment rendering.
+  thread/                the thread agent (replies and re-checks), line mapping.
+  sandbox/               run tool, local backend, envprep.py (embedded by Go).
+  memory/                memory repo, cartographer, lessons, team rules, recall.
+  trace/                 trace writer, run.json, metrics, trace show, replay and
+                         probe, scorecard.
 
-HANDOFF.md               The first thing to read on the VPN machine: what the
+eval/scenarios/          the nine scenarios: generated repos, specs, scorer,
+                         Claude Code reference reviews.
+
+agent/                   THE CONTROL PLANE (Go).
+  NOTICE.md              Fork provenance + running list of our changes. Update it.
+  README.md              Configuration, triggers, endpoints, memory, bars.
+  internal/orchestrator/ queue + finding store, webhook triggers, worker, poster,
+                         acceptance and bars, the end-to-end test.
+  internal/core/brain/   the contract, the brain runner, worktree builder.
+  internal/pkg/llmproxy/ the gateway proxy (per-model limits, raw traffic).
+  internal/pkg/sandbox/  sandbox service (Docker and local backends).
+  internal/pkg/memory/   memory bookkeeping (head, cards, consumers).
+  internal/pkg/gitlab/, internal/pkg/git/   GitLab REST, git transport.
+  cmd/server, cmd/cli    the service; review (dry run), map, metrics, clone-all.
+
+docker/runner.Dockerfile the sandbox runner image (M12 adds control and brain).
+prompts/reviewer-upgrade.md   the original brief for the v2 upgrade.
+
+HANDOFF.md               (v1; M12 rewrites it.) The first thing to read on the VPN machine: what the
                          zip did not carry (both .env files), prerequisites,
                          the Windows line-ending step, and the offline checks
                          that must pass before touching the gateway.
 
-DEPLOY.md                The F6 checklist: bot account, config, webhook, the
+DEPLOY.md                (v1; M12 rewrites it.) The F6 checklist: bot account, config, webhook, the
                          three gateway unknowns and how to test each, then the
                          scoring loop and which prompt levers to pull once the
                          numbers come from the real model. Written to be worked

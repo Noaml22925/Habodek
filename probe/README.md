@@ -1,5 +1,8 @@
 # Gateway probe
 
+(Not to be confused with `habodek-brain probe RUN --hypothesis …`, which re-investigates
+one idea in a recorded review run; this one measures the gateway.)
+
 One file, standard library only (Python ≥ 3.8). Copy `gateway_probe.py` to the VPN
 machine and run:
 

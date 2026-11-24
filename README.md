@@ -1,83 +1,86 @@
 # Habodek
 
-An automatic code-review agent for our GitLab merge requests, running on the
-company LiteLLM gateway.
+Automatic code review for our GitLab merge requests, on the company LiteLLM gateway,
+running unattended inside the VPN.
 
-It participates in the normal MR flow rather than replacing it: it reads the change
-*and the surrounding code*, opens threads on exact diff lines, answers when a
-reviewer replies, and resolves its own threads once they are addressed.
+The bar is a reviewer whose reasoning matches opening Claude Code on the repository:
+it reads the change and the code around it, follows what the change touches across
+files, packages and libraries, forms hypotheses, settles each one with evidence (and,
+where it can, by running the tests), has two independent verifiers try to refute
+what survives, and comments on the exact changed line with a `file:line` evidence
+chain. When a developer replies or pushes a fix, it goes back to the code and states a
+verdict. It never resolves threads; the developer decides. Silence on a clean MR is
+the headline property.
+
+**State (2026-11-24):** reviewer v2, milestones M0-M11 done on branch
+`habodek-brain-rework`; M12 (offline delivery to the VPN) is next.
+[`ROADMAP.md`](ROADMAP.md) is the handoff document and decision record.
 
 ## Layout
 
 ```
-agent/    The reviewer itself. Go. A fork of antlss/gitlab-review-agent (MIT) —
-          see agent/NOTICE.md for provenance and the list of our changes.
-eval/     Evaluation harness. Python. A corpus of code changes with deliberately
-          planted flaws, and a scorer that grades any reviewer's output.
-habodek/  Python support code for the harness (diff parsing, finding schema).
+agent/            The control plane (Go): GitLab webhooks, durable queue, worktrees,
+                  the LLM proxy (per-model rate limits, raw traffic), the sandbox
+                  service, memory bookkeeping, posting. It decides nothing about code.
+habodek/brain/    The brain (Python), one subprocess per job (`habodek-brain`):
+                  code intelligence, the agent loop, the review workflow, the thread
+                  agent, the cartographer, memory, traces, replay.
+eval/scenarios/   Nine generated multi-repository scenarios with expected outcomes,
+                  and reference reviews written with Claude Code.
+eval/corpus/      The v1 evaluation corpus (`habodek eval`), kept for history.
+probe/            The one-file gateway probe the owner runs on the VPN.
+docker/           The sandbox runner image (M12 adds the rest).
+docs/             The v2 design, its implementation plan, and the survey behind it.
 ```
 
-The two halves are deliberately independent. `eval/` grades *any* reviewer — it was
-built to compare candidates before we picked one, and it stays useful afterwards as
-the regression check on prompt and model changes.
+## How a review runs
 
-## Why a fork
-
-We evaluated building this from scratch, adopting [PR-Agent][pr-agent], and forking
-[gitlab-review-agent][upstream].
-
-gitlab-review-agent already does the two things that mattered most and that
-PR-Agent does not: **agentic exploration** of the repository (`read_file`,
-`search_code`, `read_multi_file` — it can go and look at the caller before
-commenting) and a **replier agent** that reads thread history plus surrounding code
-and continues the discussion. It is MIT, it talks to any OpenAI-compatible endpoint,
-and it is label-triggered rather than firing on every push.
-
-Its problem is that it is dormant — 15 commits, one author, nothing since April
-2026. So we own it now. Full reasoning is in [`ROADMAP.md`](ROADMAP.md).
-
-## Running it
-
-The agent needs no local Go toolchain to run — the Dockerfile builds it:
-
-```bash
-cd agent
-cp .env.example .env      # fill in GitLab and LiteLLM details
-docker compose up --build
+```
+GitLab --webhook--> control plane --job.json--> habodek-brain --result.json--> control plane --> GitLab
+                         |  LLM proxy <------------ requests ----|   |
+                         |  sandbox   <------------ run(cmd) ----+   |
+                         |  memory    <--- memory-apply (cards, lessons)
 ```
 
-Point a GitLab project webhook (Merge request + Comment events) at
-`http://<host>:8080/webhook`, using the same secret as `GITLAB_WEBHOOK_SECRET`.
-Add the `ai-review` label to an MR to trigger a review.
+1. A label (default `ai-review`) queues a review. The control plane fetches the MR,
+   prepares worktrees for head and merge base, the internal dependencies at the pinned
+   versions, and — for a library — the repositories that use it.
+2. The brain builds an evidence pack, runs six finder lenses, investigates each
+   hypothesis, checks every quote and anchor mechanically, and has verifier A and then
+   verifier B try to refute each finding. Only what both uphold is posted.
+3. Replies and pushes start the thread agent: fixed, fix incomplete, stands,
+   withdrawn (with a lesson), or a question.
 
-For development, install Go 1.25+ (`winget install GoLang.Go`) and:
+Details: [`agent/README.md`](agent/README.md) (configuration, triggers, endpoints) and
+[`docs/reviewer-v2-handoff.md`](docs/reviewer-v2-handoff.md) (the plan and decisions).
 
-```bash
-cd agent
-go build ./...
-go test ./...
-go test -race ./...       # always, before touching anything concurrent
-go run ./cmd/cli review   # interactive dry run: pick which comments to post
-```
+## Development
 
-See [`agent/README.md`](agent/README.md) for configuration against our gateway, and
-[`agent/README.upstream.md`](agent/README.upstream.md) for the original author's
-full feature documentation.
-
-## Evaluating a change
-
-Before and after any prompt or model change:
+No gateway is reachable from development; everything is tested offline against a
+scripted gateway that renders every request through the models' real chat templates.
 
 ```bash
 pip install -e ".[dev]"
-python -m habodek.cli eval --list              # the corpus
-python -m habodek.cli eval --materialise ./cases
-python -m habodek.cli eval --from-json out.json --verbose
+pytest -q && ruff check .
+cd agent && go build ./... && go vet ./... && go test -race ./...
+HABODEK_E2E=1 go test -run TestEndToEnd ./internal/orchestrator/   # with the real brain
 ```
 
-Read **noise on clean cases first**, detection last. A reviewer that flags
-everything scores perfectly on detection and is worthless in practice — two corpus
-cases are clean changes where the correct review is silence.
+## Looking at a run
 
-[upstream]: https://github.com/antlss/gitlab-review-agent
-[pr-agent]: https://github.com/qodo-ai/pr-agent
+Every job leaves a trace directory (`HABODEK_TRACE_DIR/<job id>/`): `run.json` (the
+inputs), `events.jsonl` (every request, response and tool call), `findings.json`
+(every hypothesis and where it ended), `metrics.json`, `result.json`.
+
+```bash
+habodek-brain trace show RUN                       # one static HTML file: the hypothesis tree,
+                                                   # tool calls, verifier arguments
+habodek-brain replay RUN                           # re-run from the recorded traffic
+habodek-brain replay RUN --from-stage verify       # ... with verification live
+habodek-brain replay RUN --model verifier_a=MODEL  # ... with another model for one role
+habodek-brain probe RUN --hypothesis "..."         # would it have found this?
+cd agent && go run ./cmd/cli metrics --project ID  # acceptance per category, raised bars
+```
+
+On the VPN, the scenario scorecard prints at most 20 lines:
+`habodek-brain scorecard --scenarios 1-9 --runs 3`.

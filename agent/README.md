@@ -55,6 +55,9 @@ decides.
 | `HABODEK_MEMORY_DIR` | `data/memory` | the `habodek-memory` git repository (`none` disables memory) |
 | `HABODEK_MAX_CONSUMERS` | 5 | consumer repositories checked out for a library MR |
 | `HABODEK_MAP_DEBOUNCE_MIN` | 10 | how long a default-branch push waits before re-mapping |
+| `HABODEK_BARS` | on | `off` disables automatic bar-raising |
+| `HABODEK_BAR_MIN_OUTCOMES`, `HABODEK_BAR_WINDOW` | 5, 50 | decided threads needed before a bar moves; recent posted findings per category considered |
+| `HABODEK_BAR_MAJOR_BELOW`, `HABODEK_BAR_CRITICAL_BELOW` | 0.5, 0.25 | acceptance below which a category posts only major+ / critical |
 | `HABODEK_SANDBOX_URL` | `http://127.0.0.1:$SERVER_PORT/internal/sandbox/v1` | how the brain reaches the sandbox endpoint |
 
 Per-model behaviour, roles and prompts are configured in the brain
@@ -66,6 +69,7 @@ Per-model behaviour, roles and prompts are configured in the brain
 go run ./cmd/server                              # the service
 go run ./cmd/cli review --project 42 --mr 7      # dry run: prints the comments, posts nothing
 go run ./cmd/cli map --project 42                # map a project into memory now (writes HABODEK_MEMORY_DIR)
+go run ./cmd/cli metrics --project 42            # acceptance per category and any raised bars
 go run ./cmd/cli clone-all                       # pre-warm the mirrors
 ```
 
@@ -83,6 +87,8 @@ go run ./cmd/cli clone-all                       # pre-warm the mirrors
   dependency files and the recipe). Backends: `Docker` (sibling containers) and
   `Local` (user + network namespace). Every run goes to the job's `sandbox.jsonl`.
 
+- `internal/orchestrator/acceptance.go` — acceptance per category, the bars it
+  raises, `GET /internal/metrics`.
 - `internal/pkg/memory` — the control plane's view of `habodek-memory`: the commit
   each job reads (`memory_commit`), whether a project has a card, and the
   reverse-dependency index from every project's `facts.json`. Writes go through
@@ -108,6 +114,26 @@ first review do it.
 the paths under its directory, and given only to the agents that propose findings —
 never to those that verify, refute or post. Lines asking not to flag something are
 dropped. It can add checks; it cannot clear one.
+
+### Observability
+
+Each job's trace directory (`HABODEK_TRACE_DIR/<job id>/`) holds `run.json` (the job,
+every root's commit, versions, prompt hashes, roles, memory commit), `events.jsonl`
+(every LLM request and response, tool call and stage), `llm-proxy.jsonl` (the raw
+traffic this service forwarded), `sandbox.jsonl`, `findings.json`, `metrics.json` and
+`result.json`. Worktrees are deleted after a job; `habodek-brain replay` and `probe`
+rebuild them from `run.json`. `habodek-brain trace show <dir>` writes `trace.html`.
+
+### Acceptance and raised bars
+
+`GET /internal/metrics?project=<id>` (and `cli metrics`) reports, per category (a
+finding's primary lens), how its posted findings fared: accepted (fixed, fix
+incomplete, or stands after a verified re-check), withdrawn, neutral (unclear,
+need info) and open. Once a category has 5 decided threads, acceptance below 50%
+makes its review jobs post only major findings and above, below 25% only criticals.
+Every raise is logged (`bar raised`), held-back findings are recorded with the
+acceptance that held them back, and the MR summary says so. The bar falls again by
+itself as acceptance recovers.
 
 ### The per-repository recipe
 

@@ -1,5 +1,13 @@
 # F6 — Deploying Habodek
 
+> **v1 document — out of date for reviewer v2 (2026-11-24).** It describes deploying
+> the v1 fork (`internal/core/…`, `cmd/cli findings`, thread auto-resolution), all of
+> which v2 removed. Milestone M12 rewrites it for v2. Until then use
+> [`agent/README.md`](agent/README.md) for configuration and
+> [`ROADMAP.md`](ROADMAP.md) for the current state. What still holds: the offline
+> transport notes (no internet on the VPN; the vendor tree builds offline) and the
+> Windows line-ending step.
+
 Everything here needs the VPN, which is why none of it is done. Everything that
 *could* be done without it already has been, so this is a checklist, not a
 design document. Work top to bottom; each step is verifiable before the next.
@@ -219,6 +227,10 @@ always a human action. That is deliberate: the previous auto-resolve keyed off
 nothing but line proximity, so it closed wrong fixes and left correct ones open.
 
 ### Reading a review after the fact
+
+*v2:* open the job's trace with `habodek-brain trace show <trace dir>`: every
+hypothesis, where it was dropped and why, and each agent's tool calls. `replay` and
+`probe` re-run it (see the root README). The v1 instructions below no longer apply.
 
 The summary comment reports how many findings were filtered but not which ones.
 To see what was dropped and why — including criticals the model found but the

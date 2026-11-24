@@ -1,5 +1,13 @@
 # Handoff — getting this running on the VPN machine
 
+> **v1 document — out of date for reviewer v2 (2026-11-24).** It describes deploying
+> the v1 fork (`internal/core/…`, `cmd/cli findings`, thread auto-resolution), all of
+> which v2 removed. Milestone M12 rewrites it for v2. Until then use
+> [`agent/README.md`](agent/README.md) for configuration and
+> [`ROADMAP.md`](ROADMAP.md) for the current state. What still holds: the offline
+> transport notes (no internet on the VPN; the vendor tree builds offline) and the
+> Windows line-ending step.
+
 You have just moved the repository across as a zip. This file covers the move
 itself: what did not come with it, what to install, and how to prove the thing
 works before you point it at anything real.

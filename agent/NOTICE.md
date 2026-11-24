@@ -35,6 +35,21 @@ git diff upstream/main -- agent/internal/pkg/llm/openai.go
 
 Recorded here as they are made, so the delta stays legible.
 
+- **2026-11-24 — observability (handoff M11).** `internal/orchestrator/acceptance.go`:
+  acceptance per category from thread outcomes, raised bars passed to review jobs as
+  `policy`, `GET /internal/metrics`, `cmd/cli metrics`. Contract: `Finding.hypothesis`,
+  `Job.policy`.
+- **2026-11-24 — memory (handoff M10).** `internal/pkg/memory`; task kind `map`
+  (first review of a project, structural default-branch pushes); lessons applied after
+  thread jobs through `habodek-brain memory-apply`; consumer worktrees for library MRs
+  (`brain.Workspaces.AddConsumers`, `PrepareBranch`); `cmd/cli map`; memory in
+  `cmd/cli review`. `GitLabProject.DefaultBranch`; contract: map jobs, memory commit
+  and updates, `MergeRequest.project_id`.
+- **2026-11-24 — sandboxed execution (handoff M9).** `internal/pkg/sandbox`
+  (`POST /internal/sandbox/v1/run`; Docker and local backends; embedded
+  `envprep.py`); the runner registers each job's roots under its token. Contract:
+  `RunWitness`.
+
 - **2026-11-24 — reviewer v2 (handoff M8).** Everything upstream did to *think*
   about a merge request is gone: `internal/core/{agents,prompt,review,reply,feedback}`,
   `internal/pkg/{llm,tools,queue,store}`, `internal/handler`, `internal/di` and most

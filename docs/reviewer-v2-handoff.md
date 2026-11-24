@@ -322,6 +322,7 @@ directory on the VPN machine, whose path is printed last.
 | After M1 — **ask early** | `python3 gateway_probe.py --base-url … --key-env … --model qwen=<alias> --model glm=<alias>` | Real limits, reasoning field and echo, effort values, the soak, the fenced-code probe, observed RPM and 429 behaviour (checklist: survey `models.md` §8) |
 | After M6 — **offer** | `habodek-brain scorecard --scenarios 1-4 --runs 3` | Does the review find the cross-library bugs and stay silent on clean MRs |
 | After M7 — **offer** | `habodek-brain scorecard --scenarios 5-9 --runs 3` | Are thread verdicts right |
+| When a result needs explaining | `habodek-brain trace show RUN`; `habodek-brain probe RUN --hypothesis "…"` | Why it said or missed something: not hypothesised vs investigated badly |
 | At the end | Install, then the full scorecard plus one real MR end to end | The owner's acceptance test (§8) |
 
 The probe is **one file, standard library only** (`urllib`, `json`), so it runs on the
@@ -359,8 +360,10 @@ habodek/                      the Python package (today: eval CLI + diff parsing
                               checks, anchor-from-snippet), roles/ (one prompt template per
                               role, plain Markdown/Jinja2), judge.py, comment.py
     thread/                   linemap.py (map lines through diffs), agent.py
-    memory/                   card.py, lessons.py, recall.py (BM25)
-    trace/                    writer.py, view.py (static HTML), replay.py, scorecard.py
+    memory/                   store.py (repo, lessons), cartographer.py, context.py,
+                              rules.py (.habodek.md), recall.py (BM25)
+    trace/                    writer.py, runinfo.py (run.json), metrics.py, view.py
+                              (static HTML), replay.py (replay + probe), scorecard.py
 probe/gateway_probe.py        stdlib only, ≤ 20 lines of output
 eval/scenarios/               generator + 9 scenario specs + expected outcomes +
                               Claude Code reference reviews
@@ -583,6 +586,16 @@ needs to fetch them).
 - `replay`, from the proxy's recorded traffic or from inputs, optionally from a stage with a different model.
 - `probe RUN --hypothesis "…"`.
 - Metrics per repo: acceptance by category, and automatic bar-raising when acceptance falls.
+
+*As built (2026-11-24):* `trace show` is in both CLIs (`habodek-brain trace show`,
+`habodek trace show`). Replay keys requests on the conversation's decisions (model,
+prompts, assistant turns, tools offered), not on tool-result text, so timings in tool
+output do not break a replay; sandbox runs are replayed from the recording. "From a
+stage with a different model" is `--from-stage` and `--model ROLE=MODEL`; every other
+request still comes from the cassette. Acceptance counts `stands` as accepted (the
+developer disputed it and a verified re-check upheld it) and `withdrawn` as
+rejected; bars are major+ below 50% and critical-only below 25%, after 5 decided
+threads, over the last 50 posted findings per category.
 
 ### M12 — Offline delivery and the egress test
 - Dockerfiles for control, brain and runner.
