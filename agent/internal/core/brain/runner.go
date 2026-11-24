@@ -87,7 +87,7 @@ func (r *Runner) JobDir(jobID string) string { return filepath.Join(r.cfg.WorkDi
 // the proxy URL and a token valid for this job.
 func (r *Runner) Run(ctx context.Context, job Job) (*Result, error) {
 	job.Contract = ContractVersion
-	if job.Kind != "review" && job.Kind != "thread" {
+	if job.Kind != "review" && job.Kind != "thread" && job.Kind != "map" {
 		return nil, fmt.Errorf("unknown job kind %q", job.Kind)
 	}
 	jobDir := r.JobDir(job.JobID)
@@ -195,4 +195,32 @@ func tail(s string, n int) string {
 		return s
 	}
 	return "…" + s[len(s)-n:]
+}
+
+// ApplyMemory merges a finished job's memory updates into the memory repository and
+// commits them (`habodek-brain memory-apply`). The caller serialises calls.
+func (r *Runner) ApplyMemory(ctx context.Context, repo, jobID string) (string, error) {
+	resultPath := filepath.Join(r.TraceDir(jobID), "result.json")
+	args := append(append([]string{}, r.cfg.Args...), "memory-apply", "--repo", repo,
+		"--result", resultPath)
+	cmd := exec.CommandContext(ctx, r.cfg.Command, args...)
+	cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"),
+		"LANG=C.UTF-8"}, passThrough("VIRTUAL_ENV", "PYTHONPATH")...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("memory-apply: %v: %s", err, tail(stderr.String(), 400))
+	}
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	return strings.TrimSpace(lines[len(lines)-1]), nil
+}
+
+func passThrough(keys ...string) []string {
+	var out []string
+	for _, k := range keys {
+		if v, ok := os.LookupEnv(k); ok {
+			out = append(out, k+"="+v)
+		}
+	}
+	return out
 }

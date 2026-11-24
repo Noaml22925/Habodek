@@ -68,6 +68,8 @@ class ScriptedModel:
             return self._thread(step, task, messages)
         if role == "thread challenger":
             return self._challenger(step, task)
+        if role == "cartographer":
+            return self._cartographer(step, task)
         if role == "judge":
             ids = re.findall(r"^Finding (\S+) \(", task, re.MULTILINE)
             return fg.call("decide", post=ids, drop=[],
@@ -203,6 +205,33 @@ class ScriptedModel:
                        claim="get_user returns None instead of raising NotFound.",
                        scenario="A deleted user opens their profile: 500 instead of 404.",
                        fix="Keep raising NotFound.", changed_line=changed, chain=chain)
+
+    def _cartographer(self, step: int, task: str) -> fg.Reply:
+        if step == 0:
+            return fg.call("glob", pattern="**/*.py", reasoning="survey the area")
+        invariants, entries = [], []
+        if "- orders/app.py" in task:  # the orders-service area, whatever the project is called
+            route = 'router.use_prefix("/api/v2/refunds", owns_refund)'
+            invariants.append({"statement": "Refunds under /api/v2/refunds pass the "
+                               "owns_refund middleware, registered by prefix in build_router",
+                               "evidence": [{"path": "orders/app.py", "line": self._line(
+                                   "orders-service", "main", "orders/app.py", route),
+                                   "quote": route}]})
+            entries.append({"what": "the HTTP router", "at": {
+                "path": "orders/app.py", "line": 1, "quote": "def build_router() -> Router:"}})
+            if self.mode == "invent_card":
+                invariants.append({"statement": "Every order is re-priced inside a database "
+                                   "transaction", "evidence": [{"path": "orders/pricing.py",
+                                   "line": 3, "quote": "with transaction():"}]})
+        if "- platform_common/store/users.py" in task:
+            invariants.append({"statement": "get_user raises NotFound for a missing user; "
+                               "it never returns None", "evidence": [{
+                                   "path": "platform_common/store/users.py", "line": 10,
+                                   "quote": 'raise NotFound(f"user {uid}")'}]})
+        return fg.call("record_survey", receipt="globbed the area, read its modules and "
+                       "traced its public functions", summary="The area's code, as read.",
+                       modules=[{"path": "app.py", "responsibility": "wiring"}],
+                       entry_points=entries, invariants=invariants)
 
     def _verifier(self, step: int, sid: str, task: str) -> fg.Reply:
         if step == 0:

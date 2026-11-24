@@ -569,6 +569,15 @@ S5-S9 scorecard.
 - Every run records the memory commit it used.
 - Reverse dependencies (§3.5 step 4).
 
+*As built (2026-11-24):* the cartographer runs one *surveyor* per area (top-level
+package) in parallel under the 300-request budget, and the card is rendered by code
+from verified fields (entry points and invariants must quote code that exists; the
+rest is dropped and counted). Re-mapping re-surveys with the previous card as input,
+rather than mapping only the diff. Lessons need two independent citations to enter
+context. Team rules reach only understand and the finders. Consumers are found only
+among mapped projects (their `facts.json` carries the GitLab id the control plane
+needs to fetch them).
+
 ### M11 — Observability
 - `habodek trace show RUN` renders static HTML: the hypothesis tree, tool calls, verifier arguments.
 - `replay`, from the proxy's recorded traffic or from inputs, optionally from a stage with a different model.

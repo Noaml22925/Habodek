@@ -23,6 +23,14 @@ type Config struct {
 	Log     LogConfig
 	Brain   BrainConfig
 	Sandbox SandboxConfig
+	Memory  MemoryConfig
+}
+
+// MemoryConfig: the habodek-memory repository (M10). Dir "" or "none" disables memory.
+type MemoryConfig struct {
+	Dir          string
+	MaxConsumers int // consumer repositories checked out for a library MR
+	MapDebounce  int // minutes a default-branch push waits before re-mapping
 }
 
 type ServerConfig struct {
@@ -165,6 +173,13 @@ func Load() (*Config, error) {
 	cfg.Sandbox.CPUs = envFloatOrDefault("HABODEK_SANDBOX_CPUS", 2)
 	cfg.Sandbox.MaxParallel = envIntOrDefault("HABODEK_SANDBOX_PARALLEL", 2)
 	cfg.Sandbox.PrepMinutes = envIntOrDefault("HABODEK_SANDBOX_PREP_MIN", 20)
+
+	cfg.Memory.Dir = envOrDefault("HABODEK_MEMORY_DIR", "data/memory")
+	if strings.EqualFold(cfg.Memory.Dir, "none") {
+		cfg.Memory.Dir = ""
+	}
+	cfg.Memory.MaxConsumers = envIntOrDefault("HABODEK_MAX_CONSUMERS", 5)
+	cfg.Memory.MapDebounce = envIntOrDefault("HABODEK_MAP_DEBOUNCE_MIN", 10)
 
 	cfg.Log.Level = strings.ToLower(envOrDefault("LOG_LEVEL", "info"))
 	cfg.Log.Format = strings.ToLower(envOrDefault("LOG_FORMAT", "json"))

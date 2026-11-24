@@ -28,6 +28,7 @@ class _Model(BaseModel):
 
 class MergeRequest(_Model):
     project: str  # path_with_namespace
+    project_id: int = 0  # GitLab project id (0: unknown, e.g. scenario runs)
     iid: int
     title: str = ""
     description: str = ""
@@ -128,6 +129,36 @@ class Note(_Model):
     is_bot: bool = False
 
 
+class Citation(_Model):
+    """Where a lesson comes from: one verified thread outcome."""
+
+    mr: str  # project!iid
+    finding_id: str
+    verdict: str  # the verified outcome, e.g. withdrawn
+    at: str = ""  # ISO date
+    head_sha: str = ""
+    convinced_by: list[EvidenceLink] = Field(default_factory=list)
+
+
+class LessonEvent(_Model):
+    text: str
+    scope: str = ""  # directory the lesson is about ("" = the whole repository)
+    citation: Citation
+
+
+class MemoryUpdate(_Model):
+    """A change to the memory repository, applied by `habodek-brain memory-apply`.
+
+    card / facts: the file's new content. lesson: merged into the matching lesson (same
+    project, similar text) or added; counts and citations are kept by the merge.
+    """
+
+    kind: Literal["card", "facts", "lesson"]
+    project: str  # path_with_namespace
+    content: str = ""
+    lesson: LessonEvent | None = None
+
+
 class ModelRouting(_Model):
     """Optional per-job override of models.yaml roles."""
 
@@ -145,7 +176,8 @@ class _JobBase(_Model):
     workspace: Workspace
     priority: Priority = "review"
     request_budget: int | None = None  # None: the default for the job kind
-    memory_path: str | None = None
+    memory_path: str | None = None  # the habodek-memory git repository
+    memory_commit: str | None = None  # read memory at this commit (None: its HEAD)
     models: ModelRouting = Field(default_factory=ModelRouting)
 
 
@@ -163,7 +195,17 @@ class ThreadJob(_JobBase):
     priority: Priority = "reply"
 
 
-Job = Annotated[ReviewJob | ThreadJob, Field(discriminator="kind")]
+class MapJob(_JobBase):
+    """The cartographer: (re)write a project's repo card from its default branch.
+
+    `workspace.head` is the default branch's worktree; `mr` names the project
+    (iid 0, target_branch = the default branch)."""
+
+    kind: Literal["map"] = "map"
+    priority: Priority = "background"
+
+
+Job = Annotated[ReviewJob | ThreadJob | MapJob, Field(discriminator="kind")]
 
 
 class JobEnvelope(_Model):
@@ -214,6 +256,8 @@ class Result(_Model):
     stats: list[StageStat] = Field(default_factory=list)
     requests: int = 0
     llm: dict[str, Any] = Field(default_factory=dict)  # client stats
+    memory_commit: str = ""  # the memory commit the run read ("" = no memory)
+    memory_updates: list[MemoryUpdate] = Field(default_factory=list)
 
 
 def finding_marker(finding_id: str) -> str:

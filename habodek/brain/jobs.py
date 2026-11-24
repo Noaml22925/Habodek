@@ -5,19 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 
 from habodek.brain.codeintel.workspace import Workspace
-from habodek.brain.contract import JobEnvelope, ReviewJob, ThreadJob
+from habodek.brain.contract import JobEnvelope, MapJob, ReviewJob, ThreadJob
 
 
-def load_job(path: Path | str) -> ReviewJob | ThreadJob:
+def load_job(path: Path | str) -> ReviewJob | ThreadJob | MapJob:
     text = Path(path).read_text(encoding="utf-8")
     return JobEnvelope.model_validate_json(text).job
 
 
-def save_job(job: ReviewJob | ThreadJob, path: Path | str) -> None:
+def save_job(job: ReviewJob | ThreadJob | MapJob, path: Path | str) -> None:
     Path(path).write_text(JobEnvelope(job=job).model_dump_json(indent=2), encoding="utf-8")
 
 
-def workspace_from_job(job: ReviewJob | ThreadJob) -> Workspace:
+def workspace_from_job(job: ReviewJob | ThreadJob | MapJob) -> Workspace:
     """The production path: rebuild the Workspace from what the control plane prepared."""
     spec = job.workspace
     ws = Workspace(head=Path(spec.head), repo=Path(spec.repo) if spec.repo else None,
@@ -32,7 +32,7 @@ def workspace_from_job(job: ReviewJob | ThreadJob) -> Workspace:
     return ws
 
 
-def attach_dependencies(job: ReviewJob | ThreadJob, ws: Workspace,
+def attach_dependencies(job: ReviewJob | ThreadJob | MapJob, ws: Workspace,
                         internal_packages: tuple[str, ...], cache_dir: Path,
                         index_url: str = "", find_links: tuple[str, ...] = ()) -> list[str]:
     """Resolve internal dependency source for the pins at base and head (handoff §3.5).

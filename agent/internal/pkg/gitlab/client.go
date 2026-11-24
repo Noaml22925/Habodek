@@ -340,14 +340,16 @@ func (c *Client) GetProject(ctx context.Context, projectID int64) (*domain.GitLa
 	var raw struct {
 		ID                int64  `json:"id"`
 		PathWithNamespace string `json:"path_with_namespace"`
+		DefaultBranch     string `json:"default_branch"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("unmarshal project: %w", err)
 	}
 
 	return &domain.GitLabProject{
-		ID:         raw.ID,
-		PathWithNS: raw.PathWithNamespace,
+		ID:            raw.ID,
+		PathWithNS:    raw.PathWithNamespace,
+		DefaultBranch: raw.DefaultBranch,
 	}, nil
 }
 

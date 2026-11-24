@@ -14,7 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from habodek.brain.contract import CONTRACT_VERSION, JobEnvelope, Result, ReviewJob, ThreadJob
+from habodek.brain.contract import (
+    CONTRACT_VERSION,
+    JobEnvelope,
+    MapJob,
+    Result,
+    ReviewJob,
+    ThreadJob,
+)
 
 TESTDATA = Path(__file__).resolve().parents[1] / "agent/internal/core/brain/testdata"
 
@@ -31,6 +38,12 @@ def test_go_thread_job_validates():
     assert isinstance(job, ThreadJob) and job.event == "reply" and job.priority == "reply"
     assert job.finding.chain[0].repo == "repo:orders-service"
     assert job.notes[1].is_bot
+
+
+def test_go_map_job_validates():
+    job = JobEnvelope.model_validate_json((TESTDATA / "job_map.json").read_text()).job
+    assert isinstance(job, MapJob) and job.priority == "background"
+    assert job.mr.project_id == 12 and job.memory_commit == "c" * 40
 
 
 def test_result_golden_is_a_valid_result():

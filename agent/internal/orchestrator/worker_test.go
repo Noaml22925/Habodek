@@ -29,11 +29,17 @@ func (b *cannedBrain) Run(_ context.Context, job brain.Job) (*brain.Result, erro
 	b.mu.Lock()
 	b.jobs = append(b.jobs, job)
 	b.mu.Unlock()
+	if job.Kind == "map" {
+		return &brain.Result{Contract: 1, JobID: job.JobID, Kind: "map", Status: "ok",
+			MemoryUpdates: []brain.MemoryUpdate{{Kind: "card", Project: job.MR.Project, Content: "# card"}}}, nil
+	}
 	if job.Kind == "thread" {
 		lesson := "middleware covers v1"
 		return &brain.Result{Contract: 1, JobID: job.JobID, Kind: "thread", Status: "ok",
 			Thread: &brain.ThreadVerdict{Verdict: "withdrawn", Body: "You're right, withdrawn.",
-				LessonCandidate: &lesson}}, nil
+				LessonCandidate: &lesson},
+			MemoryUpdates: []brain.MemoryUpdate{{Kind: "lesson", Project: job.MR.Project,
+				Lesson: &brain.LessonEvent{Text: lesson}}}}, nil
 	}
 	finding := brain.Finding{ID: "f1", Title: "t", Claim: "c", Status: "posted",
 		Anchor: brain.Anchor{Path: "store/users.py", Line: 28, Side: "new", Snippet: "return None"},
@@ -46,7 +52,11 @@ func (b *cannedBrain) Run(_ context.Context, job brain.Job) (*brain.Result, erro
 			Body: "🟠 get_user returns None\n\n<!-- habodek:finding:f1 -->", Marker: "<!-- habodek:finding:f1 -->"}}}, nil
 }
 
-type fakeWorkspaces struct{ bases []string }
+type fakeWorkspaces struct {
+	bases     []string
+	branches  []string
+	consumers []brain.Consumer
+}
 
 func (f *fakeWorkspaces) Prepare(_ context.Context, jobID string, _ int64, _ string, mr *domain.GitLabMR,
 	baseSHA string) (*brain.Prepared, error) {
@@ -57,6 +67,25 @@ func (f *fakeWorkspaces) Prepare(_ context.Context, jobID string, _ int64, _ str
 	return &brain.Prepared{Workspace: brain.Workspace{Head: "/w/" + jobID},
 		Revisions: brain.Revisions{BaseSHA: baseSHA, HeadSHA: mr.HeadSHA, StartSHA: mr.DiffRefs.StartSHA},
 		Cleanup:   func() {}}, nil
+}
+
+func (f *fakeWorkspaces) PrepareBranch(_ context.Context, jobID string, _ int64, _ string,
+	branch string) (*brain.Prepared, error) {
+	f.branches = append(f.branches, branch)
+	return &brain.Prepared{Workspace: brain.Workspace{Head: "/w/" + jobID},
+		Revisions: brain.Revisions{BaseSHA: "main1", HeadSHA: "main1"}, Cleanup: func() {}}, nil
+}
+
+func (f *fakeWorkspaces) AddConsumers(_ context.Context, p *brain.Prepared, _ string,
+	consumers []brain.Consumer) []error {
+	for _, c := range consumers {
+		if p.Workspace.OtherRepos == nil {
+			p.Workspace.OtherRepos = map[string]string{}
+		}
+		f.consumers = append(f.consumers, c)
+		p.Workspace.OtherRepos[brain.ConsumerName(c.Path, p.Workspace.OtherRepos)] = "/w/" + c.Path
+	}
+	return nil
 }
 
 type fakeGit struct{ changed []string }

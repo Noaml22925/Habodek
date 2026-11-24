@@ -10,6 +10,7 @@ const ContractVersion = 1
 
 type MergeRequest struct {
 	Project      string   `json:"project"`
+	ProjectID    int64    `json:"project_id,omitempty"` // GitLab project id
 	IID          int64    `json:"iid"`
 	Title        string   `json:"title,omitempty"`
 	Description  string   `json:"description,omitempty"`
@@ -120,6 +121,7 @@ type Job struct {
 	Priority      string       `json:"priority,omitempty"`
 	RequestBudget *int         `json:"request_budget,omitempty"`
 	MemoryPath    *string      `json:"memory_path,omitempty"`
+	MemoryCommit  *string      `json:"memory_commit,omitempty"`
 	Models        ModelRouting `json:"models"`
 	// review only
 	MaxComments  int       `json:"max_comments,omitempty"`
@@ -177,6 +179,33 @@ type Result struct {
 	Stats           []StageStat    `json:"stats"`
 	Requests        int            `json:"requests"`
 	LLM             map[string]any `json:"llm"`
+	MemoryCommit    string         `json:"memory_commit"`
+	MemoryUpdates   []MemoryUpdate `json:"memory_updates"`
+}
+
+// Citation, LessonEvent and MemoryUpdate: what a job asks to change in the memory
+// repository (M10). The control plane does not interpret them; it hands result.json
+// to `habodek-brain memory-apply`, which merges and commits.
+type Citation struct {
+	MR          string         `json:"mr"`
+	FindingID   string         `json:"finding_id"`
+	Verdict     string         `json:"verdict"`
+	At          string         `json:"at"`
+	HeadSHA     string         `json:"head_sha"`
+	ConvincedBy []EvidenceLink `json:"convinced_by"`
+}
+
+type LessonEvent struct {
+	Text     string   `json:"text"`
+	Scope    string   `json:"scope"`
+	Citation Citation `json:"citation"`
+}
+
+type MemoryUpdate struct {
+	Kind    string       `json:"kind"` // card | facts | lesson
+	Project string       `json:"project"`
+	Content string       `json:"content"`
+	Lesson  *LessonEvent `json:"lesson"`
 }
 
 // Posted returns the findings the brain decided to post.

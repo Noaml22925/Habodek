@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path"
 	"sync"
 	"time"
 
@@ -19,13 +20,19 @@ import (
 //   - new commits on a labelled MR -> a push task, which re-checks every open finding
 //     whose evidence chain the commits touch;
 //   - a human note in a bot thread -> a thread task, debounced so "fixed" and the push
-//     that goes with it arrive as one event.
+//     that goes with it arrive as one event;
+//   - a push to the default branch of a mapped project that changes its structure
+//     (files added or removed, dependency files or .habodek.md changed) -> a map task
+//     for the cartographer, debounced (MapDebounce) so a burst of merges maps once.
 type Triggers struct {
 	Store         *Store
 	WebhookSecret string
 	BotUserID     int64
 	TriggerLabel  string
 	Debounce      time.Duration
+	// Memory says which projects are mapped (nil: no memory, no map triggers).
+	Memory      interface{ HasCard(project string) bool }
+	MapDebounce time.Duration
 
 	seenMu sync.Mutex
 	seen   map[string]time.Time // webhook delivery ids, to drop GitLab's retries
@@ -109,6 +116,8 @@ func (t *Triggers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		tasks, err = t.mergeRequest(r.Context(), body)
 	case "note":
 		tasks, err = t.note(r.Context(), body)
+	case "push":
+		tasks, err = t.push(r.Context(), body)
 	}
 	if err != nil {
 		slog.Error("webhook", "kind", kind.ObjectKind, "error", err)
@@ -205,6 +214,64 @@ func (t *Triggers) note(ctx context.Context, body []byte) ([]string, error) {
 		MRIID: iid, ThreadKey: threadKey(pid, iid, ev.Attrs.DiscussionID), Priority: llmproxy.PriorityReply,
 		Event: "reply", NotBefore: time.Now().Add(t.Debounce),
 		Payload: map[string]any{"finding_id": finding.FindingID, "discussion_id": ev.Attrs.DiscussionID}})
+	if err != nil {
+		return nil, err
+	}
+	return []string{task.ID}, nil
+}
+
+type pushEvent struct {
+	Ref     string `json:"ref"`
+	Project struct {
+		ID            int64  `json:"id"`
+		Path          string `json:"path_with_namespace"`
+		DefaultBranch string `json:"default_branch"`
+	} `json:"project"`
+	Commits []struct {
+		Added    []string `json:"added"`
+		Modified []string `json:"modified"`
+		Removed  []string `json:"removed"`
+	} `json:"commits"`
+}
+
+// structural files: a change to one of these is worth re-mapping for.
+var structural = map[string]bool{"requirements.txt": true, "pyproject.toml": true, "setup.py": true,
+	"setup.cfg": true, "uv.lock": true, "poetry.lock": true, "pdm.lock": true, ".habodek.md": true}
+
+func changesStructure(ev pushEvent) bool {
+	for _, c := range ev.Commits {
+		if len(c.Added) > 0 || len(c.Removed) > 0 {
+			return true
+		}
+		for _, m := range c.Modified {
+			if structural[path.Base(m)] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (t *Triggers) push(ctx context.Context, body []byte) ([]string, error) {
+	if t.Memory == nil {
+		return nil, nil
+	}
+	var ev pushEvent
+	if err := json.Unmarshal(body, &ev); err != nil {
+		return nil, err
+	}
+	branch := ev.Project.DefaultBranch
+	if branch == "" || ev.Ref != "refs/heads/"+branch || !t.Memory.HasCard(ev.Project.Path) ||
+		!changesStructure(ev) {
+		return nil, nil
+	}
+	debounce := t.MapDebounce
+	if debounce <= 0 {
+		debounce = 10 * time.Minute
+	}
+	task, err := t.Store.Enqueue(ctx, Task{Kind: KindMap, ProjectID: ev.Project.ID, ProjectPath: ev.Project.Path,
+		ThreadKey: mapKey(ev.Project.ID), Priority: llmproxy.PriorityBackground,
+		Payload: map[string]any{"branch": branch}, NotBefore: time.Now().Add(debounce)})
 	if err != nil {
 		return nil, err
 	}

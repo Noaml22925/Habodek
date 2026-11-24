@@ -141,7 +141,13 @@ func TestGoldenJob(t *testing.T) {
 		HeadSHA: strings.Repeat("b", 40), Status: "posted", DroppedAt: nil}
 	_ = dropped
 	thread.Notes = []Note{{Author: "dev", Body: "fixed"}, {Author: "habodek", Body: "…", IsBot: true}}
-	for name, job := range map[string]Job{"job_review.json": review, "job_thread.json": thread} {
+	mem, commit := "/var/lib/habodek/memory", strings.Repeat("c", 40)
+	mapJob := Job{Contract: ContractVersion, Kind: "map", JobID: "job-44", Priority: "background",
+		MR:        MergeRequest{Project: "team/svc", ProjectID: 12, TargetBranch: "main"},
+		Revisions: Revisions{BaseSHA: strings.Repeat("d", 40), HeadSHA: strings.Repeat("d", 40)},
+		Workspace: Workspace{Head: "/w/head", Repo: "/w/repo"}, MemoryPath: &mem, MemoryCommit: &commit}
+	for name, job := range map[string]Job{"job_review.json": review, "job_thread.json": thread,
+		"job_map.json": mapJob} {
 		data, err := json.MarshalIndent(Envelope{Job: job}, "", "  ")
 		if err != nil {
 			t.Fatal(err)

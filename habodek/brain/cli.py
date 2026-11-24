@@ -4,7 +4,9 @@
     habodek-brain thread  --job job.json --out result.json --trace DIR
     habodek-brain schema  [--out DIR]          JSON Schema of job.json / result.json
     habodek-brain fake-gateway --script S.json  a scripted gateway for offline runs
-    habodek-brain map | replay | probe | scorecard | local-job   (later milestones)
+    habodek-brain map     --job job.json --out result.json --trace DIR   the cartographer
+    habodek-brain memory-apply --repo DIR --result result.json     commit memory updates
+    habodek-brain replay | probe                                   (M11)
 
 Exit codes: 0 ok (including a skipped job), 1 the job failed (result.json says why),
 2 usage error or not implemented yet.
@@ -22,7 +24,7 @@ from pathlib import Path
 from habodek.brain import __version__
 from habodek.brain.contract import json_schemas
 
-_LATER = {"map": "M10", "replay": "M11", "probe": "M11"}
+_LATER = {"replay": "M11", "probe": "M11"}
 
 
 def _home() -> Path:
@@ -84,10 +86,20 @@ def _run_job(job, ws, trace_dir: Path, limiter=None, sandbox=None):
                  *sorted(k for k in ws.extra_roots if k.startswith("repo:")))
         runs = RunLog(sandbox, trace, recipe=recipe_for(ws.head, ws.base), roots=roots)
         trace.event("sandbox", backend=sandbox.name, roots=list(roots), recipe=runs.recipe)
+    from habodek.brain.config import Config
+    from habodek.brain.memory.context import open_view
+
+    memory = open_view(job)
+    trace.event("memory", path=job.memory_path, commit=memory.commit if memory else "")
     with _client(trace, limiter) as client:
+        if job.kind == "map":
+            from habodek.brain.memory.cartographer import run_map
+
+            return run_map(job, ws, client, trace, memory, Config.from_env().internal_packages)
         if job.kind == "review":
-            return run_review(job, ws, client, trace, _review_config(), runs=runs)
-        return run_thread(job, ws, client, trace, runs=runs)
+            return run_review(job, ws, client, trace, _review_config(), runs=runs,
+                              memory=memory)
+        return run_thread(job, ws, client, trace, runs=runs, memory=memory)
 
 
 def _cmd_job(args: argparse.Namespace) -> int:
@@ -105,13 +117,36 @@ def _cmd_job(args: argparse.Namespace) -> int:
                               config.pip_index_url, config.pip_find_links)
     for line in log:
         print(f"deps: {line}", file=sys.stderr)
-    result = _run_job(job, ws, Path(args.trace or "trace"), sandbox=_sandbox(ws))
+    sandbox = _sandbox(ws) if job.kind != "map" else None  # the cartographer only reads
+    result = _run_job(job, ws, Path(args.trace or "trace"), sandbox=sandbox)
     Path(args.out or "result.json").write_text(result.model_dump_json(indent=2))
-    if result.thread:
+    if result.kind == "map":
+        print(f"{result.status}: {result.summary}, {result.requests} requests")
+    elif result.thread:
         print(f"{result.status}: {result.thread.verdict}, {result.requests} requests")
     else:
         print(f"{result.status}: {len(result.comments)} comments, {result.requests} requests")
     return 0 if result.status in ("ok", "skipped") else 1
+
+
+def _cmd_memory_apply(args: argparse.Namespace) -> int:
+    """Merge a result's memory updates into the memory repository and commit them.
+
+    The control plane runs this after a map job, and after a thread job whose
+    withdrawn verdict carries a lesson; it prints the new memory commit."""
+    from habodek.brain.contract import Result
+    from habodek.brain.memory.store import apply_updates
+
+    result = Result.model_validate_json(Path(args.result).read_text())
+    if not result.memory_updates:
+        print("no memory updates")
+        return 0
+    kinds = sorted({u.kind for u in result.memory_updates})
+    project = result.memory_updates[0].project
+    message = args.message or f"{'+'.join(kinds)} for {project} (job {result.job_id}, " \
+                              f"run {result.run_id})"
+    print(apply_updates(Path(args.repo), result.memory_updates, message))
+    return 0
 
 
 def _build_dir(args: argparse.Namespace) -> Path:
@@ -219,10 +254,16 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--out")
         p.add_argument("--trace")
         p.set_defaults(func=_cmd_job)
-    p = sub.add_parser("map")
+    p = sub.add_parser("map", help="the cartographer: write a project's repo card")
     p.add_argument("--job", required=True)
     p.add_argument("--out")
     p.add_argument("--trace")
+    p.set_defaults(func=_cmd_job)
+    p = sub.add_parser("memory-apply", help="commit a result's memory updates")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--result", required=True)
+    p.add_argument("--message")
+    p.set_defaults(func=_cmd_memory_apply)
     p = sub.add_parser("local-job", help="run one scenario against the configured gateway")
     p.add_argument("--scenario", required=True)
     p.add_argument("--build", help="scenario build dir (default $HABODEK_HOME/scenarios)")

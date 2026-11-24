@@ -22,6 +22,7 @@ const (
 	KindReview = "review" // review an MR at its head
 	KindThread = "thread" // answer a reply or re-check a finding
 	KindPush   = "push"   // an MR got new commits: find the threads whose chain they touch
+	KindMap    = "map"    // the cartographer: (re)write a project's repo card (background)
 )
 
 // Task statuses.

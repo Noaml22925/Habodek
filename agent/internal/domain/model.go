@@ -65,8 +65,9 @@ type GitLabNotePosition struct {
 }
 
 type GitLabProject struct {
-	ID         int64
-	PathWithNS string
+	ID            int64
+	PathWithNS    string
+	DefaultBranch string
 }
 
 type PostCommentResponse struct {

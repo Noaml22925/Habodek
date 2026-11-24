@@ -11,7 +11,7 @@ diff lines, answers reviewer replies, and re-checks its own threads after a fix
 
 ---
 
-## Current state — 2026-11-24: reviewer v2 being built; M0-M9 done, next is M10
+## Current state — 2026-11-24: reviewer v2 being built; M0-M10 done, next is M11
 
 **If you are the session that builds v2, start with
 [`docs/reviewer-v2-handoff.md`](docs/reviewer-v2-handoff.md).** It is the
@@ -71,6 +71,55 @@ hypothesis. M1's probe, which the owner runs on the VPN, and the optional scorec
 after M6 and M7 settle it.
 
 **Progress log (newest first).**
+
+- **M10 done (2026-11-24).** Memory: reviews no longer start from zero.
+  - `habodek-memory`: a git repo of markdown (`habodek/brain/memory/store.py`),
+    `projects/<path>/{card.md, facts.json, lessons/*.md}`. Jobs read it **at a commit**
+    (`job.memory_commit`, echoed as `result.memory_commit`), so replays are exact.
+    Jobs never write it: results carry `memory_updates`, and the control plane runs
+    `habodek-brain memory-apply` one at a time, which merges into the current HEAD
+    and commits. New contract pieces on both sides: `MapJob` (kind `map`),
+    `MemoryUpdate` / `LessonEvent` / `Citation`, `MergeRequest.project_id`; golden
+    `job_map.json`.
+  - **Cartographer** (`memory/cartographer.py`, `habodek-brain map`): facts by code
+    (package, pins, layout, test recipe, churn and past fix commits from history),
+    then one surveyor agent per area at background priority under a 300-request
+    budget. Entry points and invariants must quote code; quotes are checked and what
+    fails is dropped and counted on the card (the model is told once, then its bad
+    items are dropped rather than its whole area). The card is rendered by code and
+    keeps a **Team notes** section across re-maps. Re-maps start from the previous card.
+  - **Lessons** only from a `withdrawn` verdict that survived the challenge, with the
+    thread cited (MR, finding, head SHA, the code that convinced it). Similar lessons
+    merge (token Jaccard ≥ 0.5); a second independent citation makes a candidate
+    `active`; only active lessons, scoped to the changed paths, enter context. A person
+    can set `status: active | retired` by hand and the merge keeps it.
+  - **Team rules** (`memory/rules.py`): every `.habodek.md` from the **target branch**,
+    scoped by directory, given only to understand and the finders — never to
+    investigators, verifiers, the judge or the thread agent — so a rule can raise a
+    hypothesis but never clear one; "do not flag …" lines are dropped and recorded.
+  - **Recall** (`memory/recall.py`): BM25 over the project's memory (candidates
+    included) and every other project's card, offered as a tool to every agent; hits
+    say memory is context to check, not evidence.
+  - **Reverse dependencies:** the control plane reads every `facts.json`; a review of
+    a project that publishes a package gets worktrees of up to `HABODEK_MAX_CONSUMERS`
+    mapped consumers' default branches as `repo:<name>` roots. The summary says which
+    consumers were checked, or that none are known yet.
+  - **Go:** `internal/pkg/memory`; task kind `map` (priority background, one per
+    project); the first review of an unmapped project enqueues a map; a push to a
+    mapped project's default branch that adds/removes files or touches dependency
+    files or `.habodek.md` re-maps it (debounced 10 min); thread jobs' lessons are
+    applied after the reply is posted; `cli map --project N`; `cli review` reads memory
+    and consumers. `HABODEK_MEMORY_DIR` (default `data/memory`, `none` disables).
+  - Tests: 229 Python (memory store, lesson merging and activation, retirement kept,
+    scoping, rules scoping and suppression, BM25, cartographer on the scenario repos
+    with an invented invariant dropped, consumer index, rules absent from every
+    refuter's request, S8 → a cited lesson); Go: map triggers, consumers, lesson apply,
+    real-git branch and consumer worktrees; `HABODEK_E2E=1` now also runs the
+    cartographer through the real brain and checks the reply reads that commit.
+  - *Not covered:* lessons are matched by words, not meaning — two phrasings of one
+    lesson can stay separate (a person can merge the files). Consumers are found only
+    among mapped projects: map a library's consumers (`cli map`) before its first
+    review, or the summary will say none were checked.
 
 - **M9 done (2026-11-24).** Sandboxed execution: agents can run the code they review.
   - `habodek/brain/sandbox/envprep.py` (stdlib only, parses as 3.8; the Go side
@@ -743,14 +792,14 @@ replaced the design doc's R0-R6):
       scenarios, scorer, scorecard, Claude Code references · [x] **M6** review
       workflow (S1-S4 scorecard to offer) · [x] **M7** thread agent (S5-S9) · [x]
       **M8** into the Go control plane, old brain deleted · [x] **M9** sandboxed
-      execution (Docker backend not yet run on a real daemon) · [ ] **M10** memory · [ ] **M11** observability · [ ] **M12** offline delivery,
+      execution (Docker backend not yet run on a real daemon) · [x] **M10** memory · [ ] **M11** observability · [ ] **M12** offline delivery,
       egress test → the owner's final test
 
 ---
 
 ## Next up
 
-**v2 (2026-11-24, after M9): M10, memory** (handoff §7). Still outstanding with the
+**v2 (2026-11-24, after M10): M11, observability** (handoff §7). Still outstanding with the
 owner, none blocking: the M1 gateway probe result, and the S1-S9 scorecard offer
 (`habodek-brain scorecard --scenarios 1-9 --runs 3`; with M9 it uses the local
 sandbox where `unshare` works, and says so in its header). Do not block on the

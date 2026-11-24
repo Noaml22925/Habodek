@@ -21,6 +21,7 @@ from habodek.brain.codeintel.workspace import Workspace
 from habodek.brain.contract import (
     DependencyTree,
     Finding,
+    MapJob,
     MergeRequest,
     Note,
     ReviewJob,
@@ -95,4 +96,19 @@ def prepare(build_dir: Path, sid: str, work_dir: Path,
         job = ThreadJob(event=scenario["event"], finding=finding,
                         notes=[Note(author=n["author"], body=n["body"])
                                for n in scenario.get("notes", [])], **common)
+    return job, ws
+
+
+def prepare_map(build_dir: Path, repo_name: str, work_dir: Path, run_label: str = "map",
+                ref: str = "main") -> tuple[MapJob, Workspace]:
+    """A cartographer job for one scenario repository's default branch."""
+    repo = Path(build_dir) / "repos" / repo_name
+    work = Path(work_dir) / f"map-{repo_name}" / run_label
+    head = _worktree(repo, ref, work / "head")
+    sha = _sha(repo, ref)
+    ws = Workspace(head=head, repo=repo, base_sha=sha, head_sha=sha, work_dir=work)
+    job = MapJob(job_id=f"map-{repo_name}-{run_label}",
+                 mr=MergeRequest(project=f"scenarios/{repo_name}", iid=0, target_branch=ref),
+                 revisions=Revisions(base_sha=sha, head_sha=sha),
+                 workspace=WorkspaceSpec(head=str(head), repo=str(repo)))
     return job, ws

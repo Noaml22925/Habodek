@@ -26,6 +26,9 @@ from habodek.brain.codeintel.refs import SymbolIndex
 from habodek.brain.codeintel.workspace import PathError, Workspace
 from habodek.brain.contract import EvidenceLink, Result, StageStat, ThreadJob, ThreadVerdict
 from habodek.brain.llm.client import LLMClient
+from habodek.brain.memory.context import lesson_update, memory_section
+from habodek.brain.memory.recall import recall_tool
+from habodek.brain.memory.store import MemoryView
 from habodek.brain.runtime.loop import AgentTask, LoopEngine, RunResult
 from habodek.brain.runtime.tool import Tool, ToolContext, code_tools
 from habodek.brain.sandbox.core import RunLog
@@ -91,9 +94,11 @@ class Conclusion:
 
 class ThreadReview:
     def __init__(self, job: ThreadJob, ws: Workspace, client: LLMClient, trace: TraceWriter,
-                 index: SymbolIndex | None = None, runs: RunLog | None = None) -> None:
+                 index: SymbolIndex | None = None, runs: RunLog | None = None,
+                 memory: MemoryView | None = None) -> None:
         self.job, self.ws, self.client, self.trace = job, ws, client, trace
         self.runs = runs
+        self.memory = memory
         self.index = index or SymbolIndex(ws)
         self.engine = LoopEngine(client, trace)
         self.budget = RequestBudget(job.request_budget or THREAD_CAP, "thread")
@@ -159,6 +164,10 @@ class ThreadReview:
             f"(base: = the finding's revision)\n\n```diff\n{diff}\n```",
             f"# Roots you can read\n\n{roots}",
         ]
+        paths = [f.anchor.path, *(x.path for x in f.chain if not x.repo)]
+        remembered = memory_section(self.memory, paths)
+        if remembered:
+            parts.append(f"# Repository memory\n\n{remembered}")
         if extra:
             parts.append(extra)
         return "\n\n".join(parts)
@@ -195,6 +204,8 @@ class ThreadReview:
     def _agent(self, role: str, label: str, system: str, task: str, terminal: Tool,
                cap: int) -> RunResult:
         tools = code_tools(include_git=self.ws.repo is not None)
+        if self.memory is not None:
+            tools.append(recall_tool(self.memory))
         if self.runs is not None:
             tools.append(run_tool(self.runs))
         agent = AgentTask(role=role, label=label, system=system, task=task,
@@ -299,18 +310,21 @@ class ThreadReview:
                              witnesses=c.witnesses)
 
     def _result(self, status: str, verdict: ThreadVerdict | None, summary: str) -> Result:
+        update = lesson_update(self.job, verdict) if verdict is not None else None
         result = Result(job_id=self.job.job_id, run_id=self.run_id, kind="thread",
                         status=status, reason="" if status == "ok" else summary,
                         thread=verdict, summary=summary, stats=self.stats,
-                        requests=self.budget.used, llm=self.client.stats.as_dict())
+                        requests=self.budget.used, llm=self.client.stats.as_dict(),
+                        memory_commit=self.memory.commit if self.memory else "",
+                        memory_updates=[update] if update else [])
         self.trace.event("thread_end", verdict=verdict.verdict if verdict else None,
                          requests=self.budget.used)
         return result
 
 
 def run_thread(job: ThreadJob, ws: Workspace, client: LLMClient, trace: TraceWriter,
-               runs: RunLog | None = None) -> Result:
-    review = ThreadReview(job, ws, client, trace, runs=runs)
+               runs: RunLog | None = None, memory: MemoryView | None = None) -> Result:
+    review = ThreadReview(job, ws, client, trace, runs=runs, memory=memory)
     try:
         return review.run()
     except Exception as exc:  # noqa: BLE001 - the control plane needs a result.json

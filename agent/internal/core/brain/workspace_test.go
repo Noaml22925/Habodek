@@ -83,3 +83,53 @@ func TestWorkspacesPrepareHeadAndBase(t *testing.T) {
 	}
 	again.Cleanup()
 }
+
+func gitRepo(t *testing.T, dir, file, text string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(t, dir, "init", "-q", "-b", "main")
+	_ = os.WriteFile(filepath.Join(dir, file), []byte(text), 0o644)
+	run(t, dir, "add", "-A")
+	run(t, dir, "commit", "-qm", "init")
+	sha := run(t, dir, "rev-parse", "HEAD")
+	run(t, dir, "update-ref", "refs/remotes/origin/main", sha)
+	return sha
+}
+
+// The cartographer gets the default branch; a library review gets its consumers.
+func TestPrepareBranchAndConsumers(t *testing.T) {
+	root := t.TempDir()
+	reposDir := filepath.Join(root, "repos")
+	libSHA := gitRepo(t, filepath.Join(reposDir, "7"), "lib.py", "def f(): pass\n")
+	gitRepo(t, filepath.Join(reposDir, "12"), "app.py", "from lib import f\n")
+	g := &localGit{Manager: git.NewManager(reposDir, "http://gitlab.invalid", "")}
+	ws := &Workspaces{Git: g, WorkDir: filepath.Join(root, "jobs")}
+
+	p, err := ws.PrepareBranch(context.Background(), "map-1", 7, "team/lib", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Revisions.HeadSHA != libSHA || p.Revisions.BaseSHA != libSHA || p.Workspace.Base != "" {
+		t.Fatalf("map workspace %+v", p)
+	}
+	errs := ws.AddConsumers(context.Background(), p, "map-1", []Consumer{
+		{ProjectID: 12, Path: "team/app", Branch: "main"},
+		{ProjectID: 99, Path: "team/gone", Branch: "main"}, // no mirror: skipped, reported
+	})
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "team/gone") {
+		t.Fatalf("errors %v", errs)
+	}
+	text, _ := os.ReadFile(filepath.Join(p.Workspace.OtherRepos["app"], "app.py"))
+	if string(text) != "from lib import f\n" || len(p.Workspace.OtherRepos) != 1 {
+		t.Fatalf("consumer %+v %q", p.Workspace.OtherRepos, text)
+	}
+	p.Cleanup()
+	if _, err := os.Stat(p.Workspace.OtherRepos["app"]); !os.IsNotExist(err) {
+		t.Fatal("consumer worktree not removed")
+	}
+	if name := ConsumerName("other/app", map[string]string{"app": "x"}); name != "other-app" {
+		t.Fatalf("clash name %q", name)
+	}
+}

@@ -1,0 +1,25 @@
+{
+  "job": {
+    "contract": 1,
+    "kind": "map",
+    "job_id": "job-44",
+    "mr": {
+      "project": "team/svc",
+      "project_id": 12,
+      "iid": 0,
+      "target_branch": "main"
+    },
+    "revisions": {
+      "base_sha": "dddddddddddddddddddddddddddddddddddddddd",
+      "head_sha": "dddddddddddddddddddddddddddddddddddddddd"
+    },
+    "workspace": {
+      "head": "/w/head",
+      "repo": "/w/repo"
+    },
+    "priority": "background",
+    "memory_path": "/var/lib/habodek/memory",
+    "memory_commit": "cccccccccccccccccccccccccccccccccccccccc",
+    "models": {}
+  }
+}

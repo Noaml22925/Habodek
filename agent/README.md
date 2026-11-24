@@ -21,6 +21,8 @@ GitLab --webhook--> triggers --> durable queue --> worker --> worktrees --> habo
 |---|---|---|
 | The trigger label (`REVIEW_TRIGGER_LABEL`, default `ai-review`) added, or an MR opened with it | review the MR at its head | review |
 | A human note in a thread the bot opened | answer it (debounced `HABODEK_REPLY_DEBOUNCE_SEC`, default 60 s) | reply |
+| The first review of a project not yet in memory | map it: the cartographer writes its repo card | background |
+| A push to a mapped project's default branch that adds/removes files or changes dependency files or `.habodek.md` | re-map it (debounced `HABODEK_MAP_DEBOUNCE_MIN`, default 10) | background |
 | New commits on a labelled MR | re-check every open finding whose evidence chain the commits touch | recheck |
 
 Replies go ahead of re-checks, which go ahead of reviews. At most one task per thread
@@ -50,6 +52,9 @@ decides.
 | `HABODEK_SANDBOX_PREP_NETWORK` | `bridge` | Docker network env-prep uses to reach Artifactory (`HABODEK_PIP_INDEX_URL`); runs always get `--network none` |
 | `HABODEK_SANDBOX_CACHE`, `HABODEK_SANDBOX_WORK` | `data/sandbox`, `data/sandbox-runs` | cached venvs (by dependency files + recipe), throwaway copies |
 | `HABODEK_SANDBOX_MEMORY_MB`, `HABODEK_SANDBOX_CPUS`, `HABODEK_SANDBOX_PARALLEL` | 4096, 2, 2 | limits per run; runs at once |
+| `HABODEK_MEMORY_DIR` | `data/memory` | the `habodek-memory` git repository (`none` disables memory) |
+| `HABODEK_MAX_CONSUMERS` | 5 | consumer repositories checked out for a library MR |
+| `HABODEK_MAP_DEBOUNCE_MIN` | 10 | how long a default-branch push waits before re-mapping |
 | `HABODEK_SANDBOX_URL` | `http://127.0.0.1:$SERVER_PORT/internal/sandbox/v1` | how the brain reaches the sandbox endpoint |
 
 Per-model behaviour, roles and prompts are configured in the brain
@@ -60,6 +65,7 @@ Per-model behaviour, roles and prompts are configured in the brain
 ```bash
 go run ./cmd/server                              # the service
 go run ./cmd/cli review --project 42 --mr 7      # dry run: prints the comments, posts nothing
+go run ./cmd/cli map --project 42                # map a project into memory now (writes HABODEK_MEMORY_DIR)
 go run ./cmd/cli clone-all                       # pre-warm the mirrors
 ```
 
@@ -76,6 +82,32 @@ go run ./cmd/cli clone-all                       # pre-warm the mirrors
   env-prep builds that revision's venv (`envprep.py`, embedded; cached by the
   dependency files and the recipe). Backends: `Docker` (sibling containers) and
   `Local` (user + network namespace). Every run goes to the job's `sandbox.jsonl`.
+
+- `internal/pkg/memory` — the control plane's view of `habodek-memory`: the commit
+  each job reads (`memory_commit`), whether a project has a card, and the
+  reverse-dependency index from every project's `facts.json`. Writes go through
+  `habodek-brain memory-apply`, one at a time.
+
+### Memory
+
+`habodek-memory` is a git repository of markdown, one directory per project
+(`projects/<group>/<project>/`): `card.md` (the cartographer's; edit only its Team
+notes section, which survives a re-map), `facts.json`, and `lessons/*.md`. Lessons come
+only from a `withdrawn` verdict that survived the challenge; each cites its threads.
+A lesson becomes `active` (put in every agent's context) at its second independent
+citation; set `status: active` or `status: retired` by hand to decide sooner. Every
+job records the memory commit it read, so a replay sees the same memory.
+
+**Libraries:** when a project's `facts.json` says it publishes a package, its MRs are
+reviewed with up to `HABODEK_MAX_CONSUMERS` consumer repositories checked out — the
+mapped projects whose default branch pins that package. A consumer is known only once
+it has been mapped, so map consumers first (`cli map --project <id>`) or let their own
+first review do it.
+
+`.habodek.md` (any directory) is the team's: read from the target branch, applying to
+the paths under its directory, and given only to the agents that propose findings —
+never to those that verify, refute or post. Lines asking not to flag something are
+dropped. It can add checks; it cannot clear one.
 
 ### The per-repository recipe
 

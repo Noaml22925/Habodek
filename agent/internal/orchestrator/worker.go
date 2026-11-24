@@ -13,6 +13,7 @@ import (
 	"habodek/internal/core/brain"
 	"habodek/internal/domain"
 	"habodek/internal/pkg/llmproxy"
+	"habodek/internal/pkg/memory"
 )
 
 // BrainRunner runs one brain job (brain.Runner in production).
@@ -24,7 +25,17 @@ type BrainRunner interface {
 type WorkspaceBuilder interface {
 	Prepare(ctx context.Context, jobID string, projectID int64, projectPath string,
 		mr *domain.GitLabMR, baseSHA string) (*brain.Prepared, error)
+	PrepareBranch(ctx context.Context, jobID string, projectID int64, projectPath,
+		branch string) (*brain.Prepared, error)
+	AddConsumers(ctx context.Context, p *brain.Prepared, jobID string, consumers []brain.Consumer) []error
 }
+
+// MemoryApplier commits a finished job's memory updates (brain.Runner in production).
+type MemoryApplier interface {
+	ApplyMemory(ctx context.Context, repo, jobID string) (string, error)
+}
+
+func mapKey(projectID int64) string { return fmt.Sprintf("map:%d", projectID) }
 
 // ChangedPaths lists files changed between two revisions of a project's mirror.
 type ChangedPaths interface {
@@ -40,6 +51,7 @@ type WorkerConfig struct {
 	Lease        time.Duration
 	PollInterval time.Duration
 	MaxAttempts  int
+	MaxConsumers int // other projects checked out for a library MR (default 5)
 }
 
 // Worker claims tasks from the store and runs them.
@@ -51,6 +63,10 @@ type Worker struct {
 	Workspaces WorkspaceBuilder
 	Git        ChangedPaths
 	Config     WorkerConfig
+	// Memory is the habodek-memory repository (nil: no memory). Applier commits jobs'
+	// memory updates into it.
+	Memory  *memory.Store
+	Applier MemoryApplier
 }
 
 // Start runs the worker goroutines until ctx ends; Wait blocks until they stop.
@@ -123,6 +139,8 @@ func (w *Worker) RunTask(ctx context.Context, task *Task) {
 		err = w.thread(ctx, task)
 	case KindPush:
 		err = w.push(ctx, task)
+	case KindMap:
+		err = w.mapProject(ctx, task)
 	default:
 		err = fmt.Errorf("unknown task kind %q", task.Kind)
 	}
@@ -137,8 +155,89 @@ func (w *Worker) RunTask(ctx context.Context, task *Task) {
 	}
 }
 
-func (w *Worker) mergeRequest(mr *domain.GitLabMR, projectPath string) brain.MergeRequest {
-	return brain.MergeRequest{Project: projectPath, IID: mr.IID, Title: mr.Title,
+// withMemory points a job at the memory repository, pinned to its current commit.
+func (w *Worker) withMemory(ctx context.Context, job *brain.Job) {
+	if w.Memory == nil {
+		return
+	}
+	dir, commit := w.Memory.Dir, w.Memory.Head(ctx)
+	job.MemoryPath = &dir
+	if commit != "" {
+		job.MemoryCommit = &commit
+	}
+}
+
+// applyMemory commits what a job asked to remember. A failure is logged, not fatal:
+// the job's real output (the comment, the reply) has already been posted.
+func (w *Worker) applyMemory(ctx context.Context, jobID string, result *brain.Result) {
+	if w.Memory == nil || w.Applier == nil || len(result.MemoryUpdates) == 0 {
+		return
+	}
+	commit, err := w.Memory.Write(func() (string, error) {
+		return w.Applier.ApplyMemory(ctx, w.Memory.Dir, jobID)
+	})
+	if err != nil {
+		slog.Error("memory update", "job", jobID, "error", err)
+		return
+	}
+	slog.Info("memory updated", "job", jobID, "commit", commit, "updates", len(result.MemoryUpdates))
+}
+
+// enqueueMap asks the cartographer to map a project, in the background.
+func (w *Worker) enqueueMap(ctx context.Context, projectID int64, projectPath, branch string) {
+	if _, err := w.Store.Enqueue(ctx, Task{Kind: KindMap, ProjectID: projectID, ProjectPath: projectPath,
+		ThreadKey: mapKey(projectID), Priority: llmproxy.PriorityBackground,
+		Payload: map[string]any{"branch": branch}}); err != nil {
+		slog.Warn("enqueue map", "project", projectPath, "error", err)
+	}
+}
+
+// consumers of a library project, from the memory's reverse-dependency index.
+func (w *Worker) consumers(projectPath string) []brain.Consumer {
+	if w.Memory == nil {
+		return nil
+	}
+	limit := w.Config.MaxConsumers
+	if limit <= 0 {
+		limit = 5
+	}
+	var out []brain.Consumer
+	for _, f := range w.Memory.Consumers(projectPath) {
+		if f.GitLabID == 0 || f.DefaultBranch == "" {
+			continue // mapped without a GitLab id (a scenario run): cannot be fetched
+		}
+		out = append(out, brain.Consumer{ProjectID: f.GitLabID, Path: f.Project, Branch: f.DefaultBranch})
+		if len(out) == limit {
+			break
+		}
+	}
+	return out
+}
+
+func (w *Worker) mapProject(ctx context.Context, task *Task) error {
+	branch, _ := task.Payload["branch"].(string)
+	if branch == "" {
+		return fmt.Errorf("map task without a branch")
+	}
+	prepared, err := w.Workspaces.PrepareBranch(ctx, task.ID, task.ProjectID, task.ProjectPath, branch)
+	if err != nil {
+		return fmt.Errorf("workspace: %w", err)
+	}
+	defer prepared.Cleanup()
+	job := brain.Job{Kind: "map", JobID: task.ID, Priority: "background",
+		MR:        brain.MergeRequest{Project: task.ProjectPath, ProjectID: task.ProjectID, TargetBranch: branch},
+		Revisions: prepared.Revisions, Workspace: prepared.Workspace}
+	w.withMemory(ctx, &job)
+	result, err := w.Brain.Run(ctx, job)
+	if err != nil {
+		return err
+	}
+	w.applyMemory(ctx, task.ID, result)
+	return nil
+}
+
+func (w *Worker) mergeRequest(mr *domain.GitLabMR, projectID int64, projectPath string) brain.MergeRequest {
+	return brain.MergeRequest{Project: projectPath, ProjectID: projectID, IID: mr.IID, Title: mr.Title,
 		Description: mr.Description, Author: mr.AuthorUsername, Labels: mr.Labels,
 		SourceBranch: mr.SourceBranch, TargetBranch: mr.TargetBranch, WebURL: mr.WebURL, Draft: mr.Draft}
 }
@@ -161,7 +260,16 @@ func (w *Worker) review(ctx context.Context, task *Task) error {
 	if err != nil {
 		return fmt.Errorf("workspace: %w", err)
 	}
-	defer prepared.Cleanup()
+	defer func() { prepared.Cleanup() }()
+	if w.Memory != nil && !w.Memory.HasCard(task.ProjectPath) {
+		// First review of this project: map it in the background for the next one.
+		w.enqueueMap(ctx, task.ProjectID, task.ProjectPath, mr.TargetBranch)
+	}
+	if consumers := w.consumers(task.ProjectPath); len(consumers) > 0 {
+		for _, cerr := range w.Workspaces.AddConsumers(ctx, prepared, task.ID, consumers) {
+			slog.Warn("consumer worktree", "mr", task.MRIID, "error", cerr)
+		}
+	}
 	open, err := w.Store.Findings(ctx, task.ProjectID, task.MRIID, true)
 	if err != nil {
 		return err
@@ -174,8 +282,9 @@ func (w *Worker) review(ctx context.Context, task *Task) error {
 		}
 	}
 	job := brain.Job{Kind: "review", JobID: task.ID, Priority: "review",
-		MR: w.mergeRequest(mr, task.ProjectPath), Revisions: prepared.Revisions,
+		MR: w.mergeRequest(mr, task.ProjectID, task.ProjectPath), Revisions: prepared.Revisions,
 		Workspace: prepared.Workspace, MaxComments: w.Config.MaxComments, OpenFindings: openFindings}
+	w.withMemory(ctx, &job)
 	result, err := w.Brain.Run(ctx, job)
 	if err != nil {
 		return err
@@ -262,8 +371,9 @@ func (w *Worker) thread(ctx context.Context, task *Task) error {
 		priority = "recheck"
 	}
 	job := brain.Job{Kind: "thread", JobID: task.ID, Priority: priority, Event: task.Event,
-		MR: w.mergeRequest(mr, task.ProjectPath), Revisions: prepared.Revisions,
+		MR: w.mergeRequest(mr, task.ProjectID, task.ProjectPath), Revisions: prepared.Revisions,
 		Workspace: prepared.Workspace, Finding: &finding, Notes: notes}
+	w.withMemory(ctx, &job)
 	result, err := w.Brain.Run(ctx, job)
 	if err != nil {
 		return err
@@ -278,6 +388,7 @@ func (w *Worker) thread(ctx context.Context, task *Task) error {
 	if result.Thread.LessonCandidate != nil {
 		lesson = *result.Thread.LessonCandidate
 	}
+	w.applyMemory(ctx, task.ID, result) // a verified withdrawal becomes (or reinforces) a lesson
 	return w.Store.RecordVerdict(ctx, task.ProjectID, task.MRIID, stored.FindingID, result.Thread.Verdict, lesson)
 }
 

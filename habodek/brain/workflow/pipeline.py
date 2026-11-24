@@ -38,6 +38,10 @@ from habodek.brain.contract import (
     Verification,
 )
 from habodek.brain.llm.client import LLMClient
+from habodek.brain.memory.context import memory_section
+from habodek.brain.memory.recall import recall_tool
+from habodek.brain.memory.rules import team_rules
+from habodek.brain.memory.store import MemoryView
 from habodek.brain.runtime.loop import AgentTask, LoopEngine, RunResult
 from habodek.brain.runtime.tool import Tool, ToolContext, code_tools
 from habodek.brain.sandbox.core import RunLog
@@ -172,9 +176,11 @@ class Hypothesis:
 class Review:
     def __init__(self, job: ReviewJob, ws: Workspace, client: LLMClient, trace: TraceWriter,
                  config: ReviewConfig | None = None, index: SymbolIndex | None = None,
-                 runs: RunLog | None = None) -> None:
+                 runs: RunLog | None = None, memory: MemoryView | None = None) -> None:
         self.job, self.ws, self.client, self.trace = job, ws, client, trace
         self.runs = runs
+        self.memory = memory
+        self.rules = ""  # team rules: for the agents that propose, never those that refute
         self.config = config or ReviewConfig()
         if job.request_budget:
             self.config.review_cap = job.request_budget
@@ -213,6 +219,8 @@ class Review:
                stage_budget: RequestBudget, cap_key: str | None = None) -> RunResult:
         cap = self.config.agent_caps.get(cap_key or role, 10)
         tools = code_tools(include_git=self.ws.repo is not None)
+        if self.memory is not None:
+            tools.append(recall_tool(self.memory))
         if self.runs is not None and role in RUN_ROLES:
             tools.append(run_tool(self.runs))
         agent = AgentTask(role=role, label=label, system=system, task=task,
@@ -247,6 +255,11 @@ class Review:
         pack = evidence.build_pack(self.ws, self.index, self.changes, title=self.job.mr.title,
                                    description=self.job.mr.description, diff_text=diff_text,
                                    bumps=self.bumps)
+        changed = self.ws.changed_paths() if self.ws.repo else []
+        pack.add("Repository memory", memory_section(self.memory, changed), 1)
+        rules = team_rules(self.ws.base, changed)
+        self.rules = rules.render()
+        self.trace.event("team_rules", files=rules.files, dropped=rules.dropped)
         self.pack = pack.render(self.config.evidence_tokens)
         self.trace.event("evidence_pack", chars=len(self.pack), dropped=pack.dropped)
         trace_dir = getattr(self.trace, "dir", None)
@@ -260,7 +273,8 @@ class Review:
                         "contracts it changes.", UNDERSTAND_SCHEMA, terminal=True)
         run = self._agent("understand", "understand",
                           render("understand", terminal=terminal.name),
-                          f"# Evidence\n\n{self.pack}", terminal, stage)
+                          (f"{self.rules}\n\n" if self.rules else "")
+                          + f"# Evidence\n\n{self.pack}", terminal, stage)
         if run.ok:
             out = run.output or {}
             contracts = "\n".join(
@@ -279,6 +293,8 @@ class Review:
         parts = []
         if self.understanding:
             parts.append(f"# What the change is (from the lead reviewer)\n\n{self.understanding}")
+        if self.rules:
+            parts.append(self.rules)
         if extra:
             parts.append(extra)
         parts.append(f"# Evidence\n\n{self.pack}")
@@ -689,8 +705,12 @@ class Review:
                          + "; ".join(self.not_investigated[:3]))
         if self.unreviewed_lenses:
             parts.append("Not reviewed (no walk recorded): " + ", ".join(self.unreviewed_lenses))
-        if self._is_library() and not self.job.workspace.other_repos:
-            parts.append("This is a library: consumers in other repositories were not checked.")
+        if self._is_library():
+            consumers = sorted(self.job.workspace.other_repos)
+            parts.append("This is a library. Consumers checked: " + ", ".join(consumers) + "."
+                         if consumers else "This is a library: no consumers in other "
+                         "repositories are known yet (they appear once their projects are "
+                         "mapped), so none were checked.")
         return "\n\n".join(parts)
 
     def _is_library(self) -> bool:
@@ -735,7 +755,8 @@ class Review:
                         status=status, reason=reason, comments=comments, summary=summary,
                         findings=[*posted, *self.findings],
                         not_investigated=self.not_investigated, stats=self.stats,
-                        requests=self.budget.used, llm=self.client.stats.as_dict())
+                        requests=self.budget.used, llm=self.client.stats.as_dict(),
+                        memory_commit=self.memory.commit if self.memory else "")
         self.trace.write_json("findings.json", [f.model_dump() for f in result.findings])
         return result
 
@@ -759,8 +780,9 @@ def bumps_from_job(job: ReviewJob) -> list[pydeps.DependencySource]:
 
 
 def run_review(job: ReviewJob, ws: Workspace, client: LLMClient, trace: TraceWriter,
-               config: ReviewConfig | None = None, runs: RunLog | None = None) -> Result:
-    review = Review(job, ws, client, trace, config, runs=runs)
+               config: ReviewConfig | None = None, runs: RunLog | None = None,
+               memory: MemoryView | None = None) -> Result:
+    review = Review(job, ws, client, trace, config, runs=runs, memory=memory)
     try:
         return review.run()
     except Exception as exc:  # noqa: BLE001 - the control plane needs a result.json

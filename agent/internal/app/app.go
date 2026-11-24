@@ -4,6 +4,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"habodek/internal/config"
@@ -12,6 +13,7 @@ import (
 	"habodek/internal/pkg/git"
 	"habodek/internal/pkg/gitlab"
 	"habodek/internal/pkg/llmproxy"
+	"habodek/internal/pkg/memory"
 	"habodek/internal/pkg/sandbox"
 )
 
@@ -22,6 +24,7 @@ type App struct {
 	Git      *git.Manager
 	Proxy    *llmproxy.Proxy
 	Sandbox  *sandbox.Service // nil when HABODEK_SANDBOX=none
+	Memory   *memory.Store    // nil when HABODEK_MEMORY_DIR=none
 	Runner   *brain.Runner
 	Worker   *orchestrator.Worker
 	Triggers *orchestrator.Triggers
@@ -58,7 +61,19 @@ func Build(cfg *config.Config) (*App, error) {
 	triggers := &orchestrator.Triggers{Store: store, WebhookSecret: cfg.GitLab.WebhookSecret,
 		BotUserID: cfg.GitLab.BotUserID, TriggerLabel: cfg.Review.TriggerLabel,
 		Debounce: time.Duration(cfg.Brain.ReplyDebounceSec) * time.Second}
-	return &App{Config: cfg, Store: store, GitLab: gl, Git: gm, Proxy: proxy, Sandbox: sb,
+	var mem *memory.Store
+	if cfg.Memory.Dir != "" {
+		if err := os.MkdirAll(cfg.Memory.Dir, 0o755); err != nil {
+			store.Close()
+			return nil, err
+		}
+		mem = memory.New(cfg.Memory.Dir)
+		worker.Memory, worker.Applier = mem, runner
+		worker.Config.MaxConsumers = cfg.Memory.MaxConsumers
+		triggers.Memory = mem
+		triggers.MapDebounce = time.Duration(cfg.Memory.MapDebounce) * time.Minute
+	}
+	return &App{Config: cfg, Store: store, GitLab: gl, Git: gm, Proxy: proxy, Sandbox: sb, Memory: mem,
 		Runner: runner, Worker: worker, Triggers: triggers}, nil
 }
 

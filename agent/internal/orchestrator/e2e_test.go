@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"habodek/internal/pkg/git"
 	"habodek/internal/pkg/gitlab"
 	"habodek/internal/pkg/llmproxy"
+	"habodek/internal/pkg/memory"
 	"habodek/internal/pkg/sandbox"
 	"habodek/internal/testutil/fakegitlab"
 )
@@ -29,6 +31,10 @@ import (
 // when"): the investigator runs the repository's tests through this control plane's
 // sandbox endpoint, they fail at head and pass at base, and the posted comment cites
 // the failing run.
+//
+// Memory (M10): the first review of the project enqueues the cartographer, which runs
+// through the real brain and commits a repo card to the memory repository; the reply
+// job that follows reads memory at that commit.
 //
 // Needs python3 with the habodek package installed and habodek-brain on PATH; run
 // with HABODEK_E2E=1 (CI and the scorecard machine do).
@@ -104,7 +110,8 @@ func TestEndToEnd(t *testing.T) {
 	client := gitlab.NewClient(gl.URL(), "token")
 	worker := &Worker{Store: store, GitLab: client, Poster: &Poster{GitLab: client}, Brain: runner,
 		Workspaces: &brain.Workspaces{Git: gm, WorkDir: filepath.Join(work, "jobs")}, Git: gm,
-		Config: WorkerConfig{BotUserID: botID, MaxComments: 6, Lease: 10 * time.Minute}}
+		Config: WorkerConfig{BotUserID: botID, MaxComments: 6, Lease: 10 * time.Minute},
+		Memory: memory.New(filepath.Join(work, "memory")), Applier: runner}
 	r := &rig{store: store, gl: gl, worker: worker,
 		triggers: &Triggers{Store: store, WebhookSecret: "s3cret", BotUserID: botID, TriggerLabel: "ai-review",
 			Debounce: 100 * time.Millisecond}}
@@ -155,6 +162,21 @@ func TestEndToEnd(t *testing.T) {
 		}
 	}
 
+	// 4b. The first review mapped the project: a verified card is in memory.
+	card, err := os.ReadFile(filepath.Join(work, "memory", "projects", "group", "project", "card.md"))
+	if err != nil {
+		t.Fatalf("no repo card after the first review: %v", err)
+	}
+	for _, want := range []string{"owns_refund middleware", "`orders/app.py:", "## Team notes"} {
+		if !strings.Contains(string(card), want) {
+			t.Fatalf("card lacks %q:\n%s", want, card)
+		}
+	}
+	memCommit := worker.Memory.Head(context.Background())
+	if facts, ok := worker.Memory.Facts("group/project"); !ok || facts.GitLabID != 1 || facts.Package != "orders-service" {
+		t.Fatalf("facts %+v", facts)
+	}
+
 	// 5. A reply -> the thread agent -> a verdict in the thread.
 	gl.HumanReply(2, findings[0].DiscussionID, 5, "We only bumped a patch-level dependency, this is fine.")
 	note := notePayload(5, findings[0].DiscussionID)
@@ -174,9 +196,24 @@ func TestEndToEnd(t *testing.T) {
 	if after.Verdict != "stands" || gl.Resolved != 0 {
 		t.Fatalf("verdict %q resolved %d", after.Verdict, gl.Resolved)
 	}
+	results, _ := filepath.Glob(filepath.Join(traces, "*", "result.json"))
+	var sawThread bool
+	for _, m := range results {
+		var res brain.Result
+		data, _ := os.ReadFile(m)
+		if json.Unmarshal(data, &res) == nil && res.Kind == "thread" {
+			sawThread = true
+			if res.MemoryCommit != memCommit {
+				t.Fatalf("thread read memory %q, want %q", res.MemoryCommit, memCommit)
+			}
+		}
+	}
+	if !sawThread {
+		t.Fatal("no thread result")
+	}
 	// The proxy recorded the raw traffic of both jobs, without the gateway key.
 	matches, _ := filepath.Glob(filepath.Join(traces, "*", "llm-proxy.jsonl"))
-	if len(matches) != 2 {
+	if len(matches) != 3 { // review, map, reply
 		t.Fatalf("proxy traces = %v", matches)
 	}
 	for _, m := range matches {

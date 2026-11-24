@@ -24,16 +24,102 @@ import (
 	"habodek/internal/pkg/gitlab"
 	"habodek/internal/pkg/llmproxy"
 	"habodek/internal/pkg/logger"
+	"habodek/internal/pkg/memory"
 	"habodek/internal/pkg/sandbox"
 )
 
 func main() {
 	_ = godotenv.Load()
 	root := &cobra.Command{Use: "habodek", Short: "Habodek control plane CLI"}
-	root.AddCommand(reviewCmd(), cloneAllCmd())
+	root.AddCommand(reviewCmd(), mapCmd(), cloneAllCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// mapCmd runs the cartographer on a project's default branch now and commits the
+// repo card and facts to the memory repository (HABODEK_MEMORY_DIR). Use it to map
+// the consumers of a library before its first review.
+func mapCmd() *cobra.Command {
+	var projectID int64
+	var branch string
+	cmd := &cobra.Command{
+		Use:   "map",
+		Short: "Map a project into memory now (the cartographer; writes HABODEK_MEMORY_DIR)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("config: %w", err)
+			}
+			logger.Setup(cfg.Log.Level, "text")
+			if cfg.Memory.Dir == "" {
+				return fmt.Errorf("HABODEK_MEMORY_DIR is none: nowhere to write the card")
+			}
+			ctx := cmd.Context()
+			gl := gitlab.NewClient(cfg.GitLab.BaseURL, cfg.GitLab.Token)
+			project, err := gl.GetProject(ctx, projectID)
+			if err != nil {
+				return fmt.Errorf("fetch project: %w", err)
+			}
+			if branch == "" {
+				branch = project.DefaultBranch
+			}
+			if branch == "" {
+				return fmt.Errorf("project %d has no default branch; pass --branch", projectID)
+			}
+			proxy := llmproxy.New(llmproxy.Config{UpstreamURL: cfg.Brain.GatewayURL,
+				GatewayKey: cfg.Brain.GatewayKey, RPM: cfg.Brain.GatewayRPM})
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				return err
+			}
+			mux := http.NewServeMux()
+			mux.Handle(llmproxy.Path, proxy)
+			go func() { _ = http.Serve(listener, mux) }()
+			defer listener.Close()
+
+			jobID := fmt.Sprintf("cli-map-%d-%d", projectID, time.Now().Unix())
+			gm := git.NewManager(cfg.Git.ReposDir, cfg.GitLab.BaseURL, cfg.GitLab.Token)
+			workspaces := &brain.Workspaces{Git: gm, WorkDir: cfg.Brain.WorkDir}
+			prepared, err := workspaces.PrepareBranch(ctx, jobID, projectID, project.PathWithNS, branch)
+			if err != nil {
+				return err
+			}
+			defer func() { prepared.Cleanup() }() // AddConsumers extends Cleanup
+			runner := brain.NewRunner(brain.RunnerConfig{Command: cfg.Brain.Command,
+				WorkDir: cfg.Brain.WorkDir, TraceDir: cfg.Brain.TraceDir,
+				ProxyURL:         "http://" + listener.Addr().String() + "/internal/llm/v1",
+				Timeout:          time.Duration(cfg.Brain.TimeoutMinutes) * time.Minute,
+				InternalPackages: cfg.Brain.InternalPackages, PipIndexURL: cfg.Brain.PipIndexURL}, proxy)
+			mem := memory.New(cfg.Memory.Dir)
+			if err := os.MkdirAll(cfg.Memory.Dir, 0o755); err != nil {
+				return err
+			}
+			dir, commit := mem.Dir, mem.Head(ctx)
+			job := brain.Job{Kind: "map", JobID: jobID, Priority: "background",
+				MR:        brain.MergeRequest{Project: project.PathWithNS, ProjectID: projectID, TargetBranch: branch},
+				Revisions: prepared.Revisions, Workspace: prepared.Workspace, MemoryPath: &dir}
+			if commit != "" {
+				job.MemoryCommit = &commit
+			}
+			fmt.Printf("Mapping %s at %s on %s (trace: %s)\n", project.PathWithNS,
+				shortSHA(prepared.Revisions.HeadSHA), branch, runner.TraceDir(jobID))
+			result, err := runner.Run(ctx, job)
+			if err != nil {
+				return err
+			}
+			newCommit, err := mem.Write(func() (string, error) { return runner.ApplyMemory(ctx, mem.Dir, jobID) })
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s; memory commit %s (%d requests)\n", result.Summary, shortSHA(newCommit), result.Requests)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&projectID, "project", 0, "GitLab project ID")
+	cmd.Flags().StringVar(&branch, "branch", "", "branch to map (default: the project's default branch)")
+	_ = cmd.MarkFlagRequired("project")
+	return cmd
 }
 
 // reviewCmd reviews one MR with the brain and prints the comments it would post.
@@ -86,7 +172,7 @@ func reviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer prepared.Cleanup()
+			defer func() { prepared.Cleanup() }() // AddConsumers extends Cleanup
 			runner := brain.NewRunner(brain.RunnerConfig{Command: cfg.Brain.Command,
 				WorkDir: cfg.Brain.WorkDir, TraceDir: cfg.Brain.TraceDir,
 				ProxyURL:         "http://" + listener.Addr().String() + "/internal/llm/v1",
@@ -96,6 +182,25 @@ func reviewCmd() *cobra.Command {
 			if sb != nil {
 				runner.WithSandbox(sb)
 			}
+			var memPath, memCommit *string
+			if cfg.Memory.Dir != "" { // read-only here: a dry run writes no memory
+				mem := memory.New(cfg.Memory.Dir)
+				dir, commit := mem.Dir, mem.Head(ctx)
+				memPath = &dir
+				if commit != "" {
+					memCommit = &commit
+				}
+				var consumers []brain.Consumer
+				for _, f := range mem.Consumers(project.PathWithNS) {
+					if f.GitLabID != 0 && f.DefaultBranch != "" && len(consumers) < cfg.Memory.MaxConsumers {
+						consumers = append(consumers, brain.Consumer{ProjectID: f.GitLabID, Path: f.Project,
+							Branch: f.DefaultBranch})
+					}
+				}
+				for _, cerr := range workspaces.AddConsumers(ctx, prepared, jobID, consumers) {
+					fmt.Println("consumer skipped:", cerr)
+				}
+			}
 			fmt.Printf("Reviewing %s!%d at %s (trace: %s)\n", project.PathWithNS, mrIID,
 				shortSHA(mr.HeadSHA), runner.TraceDir(jobID))
 			result, err := runner.Run(ctx, brain.Job{Kind: "review", JobID: jobID, Priority: "review",
@@ -103,7 +208,7 @@ func reviewCmd() *cobra.Command {
 					Description: mr.Description, Author: mr.AuthorUsername, Labels: mr.Labels,
 					SourceBranch: mr.SourceBranch, TargetBranch: mr.TargetBranch, WebURL: mr.WebURL},
 				Revisions: prepared.Revisions, Workspace: prepared.Workspace,
-				MaxComments: cfg.Brain.MaxComments})
+				MaxComments: cfg.Brain.MaxComments, MemoryPath: memPath, MemoryCommit: memCommit})
 			if err != nil {
 				return err
 			}
