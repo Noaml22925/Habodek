@@ -63,6 +63,10 @@ class ScriptedModel:
             return self._investigator(step, sid, task, messages)
         if role == "verifier":
             return self._verifier(step, sid, task)
+        if role == "thread":
+            return self._thread(step, task, messages)
+        if role == "thread challenger":
+            return self._challenger(step, task)
         if role == "judge":
             ids = re.findall(r"^Finding (\S+) \(", task, re.MULTILINE)
             return fg.call("decide", post=ids, drop=[],
@@ -191,6 +195,104 @@ class ScriptedModel:
                                       "claim": "guard"}])
         return fg.call("verdict", outcome="upheld", reason="every link checks out and nothing "
                        "upstream prevents it")
+
+
+def _tool_text(messages: list) -> str:
+    return "\n".join(m.get("content") or "" for m in messages if m["role"] == "tool")
+
+
+def _line_of(text: str, path_header: str, needle: str) -> int | None:
+    """Line number of `needle` in a `read` result block for `path_header`."""
+    block = text.split(f"== {path_header} ", 1)
+    if len(block) < 2:
+        return None
+    for row in block[1].split("\n== ", 1)[0].splitlines()[1:]:
+        number, _, code = row.partition("\t")
+        if needle in code:
+            return int(number)
+    return None
+
+
+def _thread_methods():
+    def _thread(self, step: int, task: str, messages: list) -> fg.Reply:
+        f2 = "# Your finding F2" in task
+        if step == 0:
+            paths = (["orders/app.py", "orders/api/refunds.py", "orders/middleware/ownership.py"]
+                     if f2 else ["platform_common/store/users.py",
+                                 "platform_common/cache/users.py",
+                                 "repo:orders-service:orders/api/profile.py",
+                                 "repo:orders-service:orders/jobs/digest.py"])
+            return fg.call("read", paths=paths, reasoning="re-walk the chain at head")
+        seen = _tool_text(messages)
+        if f2:
+            return self._thread_f2(seen, task)
+        return self._thread_f1(seen)
+
+    def _thread_f1(self, seen: str) -> fg.Reply:
+        users = "platform_common/store/users.py"
+        if 'raise NotFound(f"user {uid}")' in seen.split("== platform_common/cache")[0] and \
+                "return None" not in seen.split("== platform_common/cache")[0]:
+            return fg.call("conclude_thread", claim_type="none", verdict="fixed",
+                           reason="get_user raises NotFound again; every site recovers",
+                           reply="Fixed: get_user raises NotFound again "
+                                 f"({users}:{_line_of(seen, users, 'raise NotFound')}).")
+        digest = "repo:orders-service:orders/jobs/digest.py"
+        digest_line = _line_of(seen, digest, "user.email")
+        cache_line = _line_of(seen, "platform_common/cache/users.py", "except NotFound:")
+        digest_link = {"path": digest, "line": digest_line, "claim": "still dereferences None",
+                       "quote": "notify.send_digest(user.email, orders_store.list_for_user(uid))"}
+        cache_link = {"path": "platform_common/cache/users.py", "line": cache_line,
+                      "quote": "except NotFound:", "claim": "misses still not cached"}
+        profile = "repo:orders-service:orders/api/profile.py"
+        if _line_of(seen, profile, "if user is None:") is not None:
+            return fg.call("conclude_thread", claim_type="handled_elsewhere",
+                           verdict="fix_incomplete", reason="profile handles None; the digest "
+                           "and the cache do not",
+                           reply="Partly fixed: the profile endpoint now handles None. The "
+                                 "weekly digest and the user cache are still affected.",
+                           remaining=[digest_link, cache_link])
+        users_line = _line_of(seen, users, "return None")
+        return fg.call("conclude_thread", claim_type="fixed", verdict="stands",
+                       reason="the push does not touch get_user or any site in the chain",
+                       reply="This still applies: get_user still returns None.",
+                       remaining=[{"path": users, "line": users_line, "quote": "return None",
+                                   "claim": "unchanged"}, digest_link])
+
+    def _thread_f2(self, seen: str, task: str) -> fg.Reply:
+        if '"/api/v1/refunds", owns_refund' in seen:
+            line = _line_of(seen, "orders/app.py", '"/api/v1/refunds", owns_refund')
+            return fg.call("conclude_thread", claim_type="handled_elsewhere",
+                           verdict="withdrawn", reason="owns_refund covers the v1 prefix",
+                           reply="You're right, withdrawn: owns_refund is registered on "
+                                 "/api/v1/refunds.",
+                           convinced_by=[{"path": "orders/app.py", "line": line,
+                                          "quote": 'router.use_prefix("/api/v1/refunds", '
+                                                   'owns_refund)', "claim": "covers v1"}],
+                           lesson="Ownership checks can be prefix middleware in orders/app.py.")
+        v2 = _line_of(seen, "orders/app.py", '"/api/v2/refunds", owns_refund')
+        reg = _line_of(seen, "orders/app.py", "router.register(refunds.bp)")
+        return fg.call("conclude_thread", claim_type="handled_elsewhere", verdict="stands",
+                       reason="owns_refund is only on /api/v2/refunds",
+                       reply="This still applies: owns_refund is registered only for "
+                             "/api/v2/refunds; the v1 route is not covered.",
+                       remaining=[{"path": "orders/app.py", "line": v2, "claim": "v2 only",
+                                   "quote": 'router.use_prefix("/api/v2/refunds", owns_refund)'},
+                                  {"path": "orders/app.py", "line": reg, "claim": "v1 bare",
+                                   "quote": "router.register(refunds.bp)"}])
+
+    def _challenger(self, step: int, task: str) -> fg.Reply:
+        if step == 0:
+            return fg.call("read", paths=["."], reasoning="attack the conclusion")
+        if self.mode == "challenger_disagrees":
+            return fg.call("challenge", outcome="disagree", reason="the cited site is not the "
+                           "whole story; another path exists")
+        return fg.call("challenge", outcome="agree", reason="the code supports the conclusion")
+
+    return _thread, _thread_f1, _thread_f2, _challenger
+
+
+(ScriptedModel._thread, ScriptedModel._thread_f1, ScriptedModel._thread_f2,
+ ScriptedModel._challenger) = _thread_methods()
 
 
 def dump(body: dict) -> str:  # debugging aid

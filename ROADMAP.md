@@ -72,6 +72,29 @@ after M6 and M7 settle it.
 
 **Progress log (newest first).**
 
+- **M7 done (2026-11-24).** The thread agent, in `habodek/brain/thread/`.
+  - `linemap.py`: maps a finding-time `path:line` to HEAD through
+    `diff(finding_sha, HEAD)`: unchanged / moved / changed (pointing at the code that
+    replaced it) / deleted; renames followed. Links into other repositories are
+    located by their quote instead (no finding-time SHA for them).
+  - `agent.py`: the task carries the finding, the thread, the diff since, and every
+    chain link mapped to HEAD with its current code. Round 1 (thread model, cap 14)
+    concludes `fixed` / `fix_incomplete` / `stands` / `withdrawn` / `need_info`
+    through a checked terminal tool (`remaining` required for incomplete/stands,
+    `convinced_by` for withdrawn, every quote verified). The other model challenges
+    (cap 4); on disagreement a second round with the argument (cap 8) and a second
+    challenge (cap 4); still disagreeing → `unclear` with both arguments. A relaxing
+    verdict (`fixed`, `withdrawn`) fails closed to `unclear` if the challenge cannot
+    run. Withdrawn records a lesson candidate. Priority header: `reply` for replies,
+    `recheck` for pushes. Total ≤ 30 requests.
+  - CLI: `habodek-brain thread --job`; `local-job` and `scorecard` run S5-S9.
+  - Tests: S5-S9 give the expected verdicts on the scripted model, whose decisions
+    come from what its tool calls read (S8 vs S9 is decided by reading
+    `orders/app.py`); persistent disagreement → `unclear`; line mapping on edits
+    above / inside / below the anchor, renames, deletes. 181 tests pass.
+  - **Next: offer the owner the S5-S9 scorecard** (with S1-S4), once the brain can
+    be installed on the VPN.
+
 - **M6 done (2026-11-24).** The review workflow, end to end, in
   `habodek/brain/workflow/`.
   - `pipeline.py`: gate → evidence pack → understand → 6 finder lenses in parallel

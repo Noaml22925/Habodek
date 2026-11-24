@@ -22,7 +22,7 @@ from pathlib import Path
 from habodek.brain import __version__
 from habodek.brain.contract import json_schemas
 
-_LATER = {"thread": "M7", "map": "M10", "replay": "M11", "probe": "M11"}
+_LATER = {"map": "M10", "replay": "M11", "probe": "M11"}
 
 
 def _home() -> Path:
@@ -52,26 +52,31 @@ def _review_config():
 
 
 def _run_job(job, ws, trace_dir: Path, limiter=None):
+    from habodek.brain.thread.agent import run_thread
     from habodek.brain.trace.writer import TraceWriter
     from habodek.brain.workflow.pipeline import run_review
 
     trace = TraceWriter(trace_dir)
-    if job.kind == "review":
-        with _client(trace, limiter) as client:
+    with _client(trace, limiter) as client:
+        if job.kind == "review":
             return run_review(job, ws, client, trace, _review_config())
-    raise NotImplementedError("thread jobs arrive with M7")
+        return run_thread(job, ws, client, trace)
 
 
-def _cmd_review(args: argparse.Namespace) -> int:
+def _cmd_job(args: argparse.Namespace) -> int:
+    """`review` and `thread`: one job.json in, one result.json out."""
     from habodek.brain.jobs import load_job, workspace_from_job
 
     job = load_job(args.job)
-    if job.kind != "review":
+    if job.kind != args.command:
         print(f"{args.job} is a {job.kind} job; use `habodek-brain {job.kind}`", file=sys.stderr)
         return 2
     result = _run_job(job, workspace_from_job(job), Path(args.trace or "trace"))
     Path(args.out or "result.json").write_text(result.model_dump_json(indent=2))
-    print(f"{result.status}: {len(result.comments)} comments, {result.requests} requests")
+    if result.thread:
+        print(f"{result.status}: {result.thread.verdict}, {result.requests} requests")
+    else:
+        print(f"{result.status}: {len(result.comments)} comments, {result.requests} requests")
     return 0 if result.status in ("ok", "skipped") else 1
 
 
@@ -91,8 +96,8 @@ def _cmd_local_job(args: argparse.Namespace) -> int:
     result = _run_job(job, ws, trace_dir)
     out = Path(args.out or (trace_dir / "result.json"))
     out.write_text(result.model_dump_json(indent=2))
-    print(f"S{args.scenario} {result.status}: {len(result.comments)} comments, "
-          f"{result.requests} requests -> {out}")
+    what = result.thread.verdict if result.thread else f"{len(result.comments)} comments"
+    print(f"S{args.scenario} {result.status}: {what}, {result.requests} requests -> {out}")
     return 0 if result.status in ("ok", "skipped") else 1
 
 
@@ -162,16 +167,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"habodek-brain {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("review", help="review a merge request (job.json -> result.json)")
-    p.add_argument("--job", required=True)
-    p.add_argument("--out")
-    p.add_argument("--trace")
-    p.set_defaults(func=_cmd_review)
-    for name in ("thread", "map"):
-        p = sub.add_parser(name)
+    for name, text in (("review", "review a merge request (job.json -> result.json)"),
+                       ("thread", "answer a reply or re-check a finding after a push")):
+        p = sub.add_parser(name, help=text)
         p.add_argument("--job", required=True)
         p.add_argument("--out")
         p.add_argument("--trace")
+        p.set_defaults(func=_cmd_job)
+    p = sub.add_parser("map")
+    p.add_argument("--job", required=True)
+    p.add_argument("--out")
+    p.add_argument("--trace")
     p = sub.add_parser("local-job", help="run one scenario against the configured gateway")
     p.add_argument("--scenario", required=True)
     p.add_argument("--build", help="scenario build dir (default $HABODEK_HOME/scenarios)")
