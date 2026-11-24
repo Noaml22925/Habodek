@@ -72,6 +72,44 @@ after M6 and M7 settle it.
 
 **Progress log (newest first).**
 
+- **M6 done (2026-11-24).** The review workflow, end to end, in
+  `habodek/brain/workflow/`.
+  - `pipeline.py`: gate → evidence pack → understand → 6 finder lenses in parallel
+    (`counterframe` is the optional 7th) → coverage gate from the transcript (a finder
+    that did not read code or give a receipt is relaunched once, then reported as
+    unreviewed; its suspected criticals are kept) → triage (code: merge same changed
+    line + similar claim, order by severity and agreement) → investigators in priority
+    order under the stage budget (the rest: "not investigated: budget", in the result
+    and the summary) → mechanical checks → verifier A, then B only if A upheld (an
+    error or `uncertain` fails closed) → reverse audit (2nd round only if the 1st
+    found something) → judge (skipped when nothing survived; deterministic fallback
+    if it fails) → `result.json`. Every drop is in `result.findings` with
+    `dropped_at` and `drop_reason`; `findings.json` is in the trace.
+  - `evidence.py`: the deterministic evidence pack (MR, diff, symbol changes, changed
+    functions before/after, references with enclosing functions, library diff of a
+    bumped dependency, repo map; capped, lowest-priority sections left out first and
+    named) and the checks: quotes must exist (line corrected from the quote),
+    anchor resolved from the quoted changed line against the diff, ≥ 2 verified
+    links, one finding per anchored line. The investigator's `conclude` runs the same
+    checks as tool errors, so a model gets to fix a bad quote before it costs a drop.
+  - `prompts.py` + `roles/*.md`: generic role prompts; six short lenses.
+    `comment.py`: comments rendered by code from the verified fields (chain with
+    `path:line` per site, blob links at the head SHA, hidden marker). Finding ids are
+    a hash of anchor path + changed code + title, stable across re-reviews.
+  - CLI: `habodek-brain review --job`, `local-job --scenario N`, and
+    `scorecard --scenarios 1-4 --runs 3` (one limiter shared by all runs, a trace
+    per run). Tested end to end over HTTP against the fake gateway.
+  - Tests: a scripted model (`tests/scripted_model.py`) plays every role with real
+    tool calls on the scenario repos: S1 and S2 found with full chain and right
+    anchor, S3 and S4 silent; invented quote / off-diff anchor / no evidence are
+    stopped; a refuting verifier drops the finding; budget leftovers are recorded.
+  - Deviations from the design, on purpose: triage is code, not a lead agent (saves
+    requests; revisit if the scorecard shows duplicate investigations); comment text
+    is rendered by code from verified fields rather than written by the judge (no
+    unverified prose reaches GitLab); the judge only orders, drops and summarises.
+  - **Next: offer the owner the S1-S4 scorecard** — it needs the brain installed on
+    the VPN (see M12's open question about Artifactory proxying PyPI).
+
 - **M5 done (2026-11-24).** Scenarios, scorer, scorecard, reference reviews.
   - `eval/scenarios/repos/`: the sources of `platform-common` (2.3.0),
     `payments-lib` (1.4.2, 1.5.0) and `orders-service` (30 files), with the variants

@@ -51,8 +51,8 @@ def test_schema_export(tmp_path, capsys):
 
 
 def test_unimplemented_commands_say_which_milestone(capsys):
-    assert cli.main(["review", "--job", "x.json"]) == 2
-    assert "M6" in capsys.readouterr().err
+    assert cli.main(["thread", "--job", "x.json"]) == 2
+    assert "M7" in capsys.readouterr().err
 
 
 def test_marker():

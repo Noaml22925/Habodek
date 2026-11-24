@@ -28,6 +28,7 @@ from habodek.brain.contract import (
     ThreadJob,
 )
 from habodek.brain.contract import Workspace as WorkspaceSpec
+from habodek.brain.jobs import workspace_from_job  # noqa: F401 - re-exported
 
 
 def _sha(repo: Path, ref: str) -> str:
@@ -95,18 +96,3 @@ def prepare(build_dir: Path, sid: str, work_dir: Path,
                         notes=[Note(author=n["author"], body=n["body"])
                                for n in scenario.get("notes", [])], **common)
     return job, ws
-
-
-def workspace_from_job(job: ReviewJob | ThreadJob) -> Workspace:
-    """The production path: rebuild the Workspace from what the control plane prepared."""
-    spec = job.workspace
-    ws = Workspace(head=Path(spec.head), repo=Path(spec.repo) if spec.repo else None,
-                   base=Path(spec.base) if spec.base else None,
-                   base_sha=job.revisions.base_sha, head_sha=job.revisions.head_sha)
-    for tree in spec.dependencies:
-        ws.add_root(f"dep:{tree.name}@{tree.version}", tree.path)
-    for name, path in spec.other_repos.items():
-        ws.add_root(f"repo:{name}", path)
-    for i, site in enumerate(spec.venvs):
-        ws.add_root(f"site:{i}", site)
-    return ws

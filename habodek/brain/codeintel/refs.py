@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -104,6 +105,7 @@ class SymbolIndex:
         self.cache = cache or TagCache()
         self.use_jedi = use_jedi
         self._jedi = None
+        self._jedi_lock = threading.Lock()  # jedi is not thread-safe; agents run in parallel
 
     # ----------------------------------------------------------------- helpers
     def _roots(self, roots: list[str] | None) -> list[tuple[str, Path]]:
@@ -220,7 +222,8 @@ class SymbolIndex:
             path = self.ws.resolve(target.spec)
             text = read_text(path).splitlines()[target.definition.line - 1]
             col = _name_column(text, name)
-            refs = self._jedi_backend().references(path, target.definition.line, col)
+            with self._jedi_lock:
+                refs = self._jedi_backend().references(path, target.definition.line, col)
         except Exception as exc:  # noqa: BLE001 - tier 1 is always there
             result = self._tier1(name, None, None)
             result.note = f"tier 2 failed ({type(exc).__name__}: {exc}); tier 1 used"
