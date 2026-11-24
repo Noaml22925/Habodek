@@ -246,10 +246,12 @@ func (c *Client) PostInlineComment(ctx context.Context, req domain.PostInlineCom
 	if req.OldPath != "" {
 		position["old_path"] = req.OldPath
 	}
-	if req.NewLine > 0 {
+	if req.FileLevel {
+		position["position_type"] = "file"
+	} else if req.NewLine > 0 {
 		position["new_line"] = req.NewLine
 	}
-	if req.OldLine > 0 {
+	if req.OldLine > 0 && !req.FileLevel {
 		position["old_line"] = req.OldLine
 	}
 	body := map[string]any{"body": req.Body, "position": position}

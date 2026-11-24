@@ -287,11 +287,14 @@ type PostInlineCommentRequest struct {
 	NewLine   int
 	// OldLine/OldPath: a removed line sets only old_line; a context line sets both
 	// (GitLab rejects a context line positioned by new_line alone).
-	OldLine  int
-	OldPath  string
-	BaseSHA  string
-	HeadSHA  string
-	StartSHA string
+	OldLine int
+	OldPath string
+	// FileLevel posts on the file rather than a line (the fallback when GitLab
+	// rejects a line position).
+	FileLevel bool
+	BaseSHA   string
+	HeadSHA   string
+	StartSHA  string
 }
 
 type PostCommentResponse struct {

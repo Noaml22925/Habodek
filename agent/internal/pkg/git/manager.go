@@ -650,3 +650,18 @@ func (m *Manager) MergeBase(ctx context.Context, projectID int64, a, b string) (
 	out, err := m.runGitOutput(ctx, m.RepoPath(projectID), "merge-base", a, b)
 	return strings.TrimSpace(out), err
 }
+
+// ChangedPaths lists the paths changed between two revisions (renames as the new path).
+func (m *Manager) ChangedPaths(ctx context.Context, projectID int64, from, to string) ([]string, error) {
+	out, err := m.runGitOutput(ctx, m.RepoPath(projectID), "diff", "--name-only", "-M", from, to)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			paths = append(paths, line)
+		}
+	}
+	return paths, nil
+}
