@@ -72,6 +72,28 @@ after M6 and M7 settle it.
 
 **Progress log (newest first).**
 
+- **M4 done (2026-11-24).** The agent runtime, in `habodek/brain/runtime/`.
+  - `tool.py`: `Tool` (schema, `run`, `terminal`, semantic `check`) and the code
+    toolset over M3 (`read`, `grep`, `glob`, `outline`, `definition`, `references`,
+    `callers`, `note`, `git_log`, `git_blame`, `git_show`); outputs capped at 60K
+    characters with a note; descriptions ask for batched calls.
+  - `loop.py`: `AgentTask` → `RunResult` through `LoopEngine` (the `Engine` seam of
+    §3.7). Guards: identical call → "already done"; 5 identical or 4 turns without a
+    new read/note → checkpoint (asks for a `note`); plain-text / empty /
+    reasoning-only turns → targeted nudges; 3 invalid calls → `malformed`. Budgets:
+    turns, requests (a child of the review's `RequestBudget`), wall clock; at the
+    limit the run is told to conclude and offered only its terminal tool, with 2
+    requests held in reserve. A degenerate turn on both models ends the run; a
+    fallback model continues it. All nudges are *user* messages.
+  - `compaction.py`: elide old tool outputs above 60% of the window; above 80% the
+    model records progress through a `record_progress` tool and history is rebuilt
+    as pinned task + summary + notes (mechanical fallback if it will not). Tool-call
+    turns and their results are never split.
+  - `workflow/budget.py`: hierarchical `RequestBudget` with the §3.1 defaults.
+  - Guards live in `loop.py` rather than a separate `guards.py` (they share the
+    run's state). 18 runtime tests; every request in them is rendered through the
+    real chat template and checked for orphaned tool results.
+
 - **M3 done (2026-11-24).** Code intelligence for Python and dependency source,
   in `habodek/brain/codeintel/`.
   - `workspace.py`: named roots (`head`, `base`, `dep:<pkg>@<ver>`, `repo:<name>`,
