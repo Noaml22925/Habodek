@@ -72,6 +72,34 @@ after M6 and M7 settle it.
 
 **Progress log (newest first).**
 
+- **M5 done (2026-11-24).** Scenarios, scorer, scorecard, reference reviews.
+  - `eval/scenarios/repos/`: the sources of `platform-common` (2.3.0),
+    `payments-lib` (1.4.2, 1.5.0) and `orders-service` (30 files), with the variants
+    each scenario branch adds. `build.py` makes three real git repos with history (incl.
+    "Fix negative cache poisoning on NotFound" and "Fix double charge on retry" for the
+    history lens), a local wheel index, and `expected/` + `findings/` with line numbers
+    resolved from the generated code. Deterministic (fixed dates; same SHAs every
+    build); output in `eval/scenarios/_build/` (git-ignored, `VERSION`-stamped).
+  - Checked the scenarios are real, by running the repos' own tests: base green; S1
+    green because the MR "updates" `tests/test_cache.py` too (asserting `None` and
+    dropping the negative-cache assertion — the realistic way a regression hides);
+    S2's bump fails `test_declined_cancels` (the witness M9 will run); S3/S4/S8/S9
+    green. S8 vs S9 verified by dispatching a request as another user: 403 vs 200.
+  - `prepare.py`: scenario → job + workspace, the way the control plane will: head and
+    merge-base worktrees, dependency source at both pins from the index, consumer
+    repos (`repo:orders-service`) handed over explicitly until M10's reverse index.
+    `workspace_from_job` rebuilds a Workspace from a job (the production path).
+  - `score.py`: found / chain / anchor / silent; for a miss, the stage that lost it
+    (not hypothesised, not investigated: budget, dropped at <stage>). Threads: verdict,
+    cited remaining site, lesson. `habodek/brain/trace/scorecard.py`: N runs per
+    scenario, ≤ 20 diagnostic lines, a side-by-side file with the references.
+  - `eval/scenarios/s1..s9/reference_claude_code.md`: my own reviews and thread
+    verdicts, written after tracing each chain in the built repos.
+  - *Learned (fixture bugs found while reviewing):* the first S8 layout put
+    `POST /api/v1/refunds` under the `/api/v1/refunds` ownership prefix, which would
+    500 on refund creation — a real second bug that would have muddied "withdrawn"; the
+    POST moved to `/api/v1/orders/{order_id}/refunds`.
+
 - **M4 done (2026-11-24).** The agent runtime, in `habodek/brain/runtime/`.
   - `tool.py`: `Tool` (schema, `run`, `terminal`, semantic `check`) and the code
     toolset over M3 (`read`, `grep`, `glob`, `outline`, `definition`, `references`,

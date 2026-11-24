@@ -234,3 +234,4 @@ agent/resource/
 # Patch files are transfer artifacts for moving work to the VPN machine.
 # Keeping stale ones in the tree invites re-applying the wrong one.
 *.patch
+eval/scenarios/_build/
