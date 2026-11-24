@@ -11,12 +11,26 @@ diff lines, answers reviewer replies, and re-checks its own threads after a fix
 
 ---
 
-## Current state — 2026-11-24: reviewer v2 proposed, awaiting approval
+## Current state — 2026-11-24: reviewer v2 approved, implementation not started
 
-**Read [`docs/reviewer-v2.md`](docs/reviewer-v2.md) first.** It is the design for
-the next version and supersedes the direction described in the rest of this file.
-Nothing in it is built yet: the owner asked to approve the direction before any
-building starts, and that approval has not been given.
+**If you are the session that builds v2, start with
+[`docs/reviewer-v2-handoff.md`](docs/reviewer-v2-handoff.md).** It is the
+implementation plan (milestones M0-M12, each with "done when"), with the owner's
+constraints and the facts already verified. Then read
+[`docs/reviewer-v2.md`](docs/reviewer-v2.md), the design and its reasoning. Where the
+two differ, the handoff wins. Nothing of v2 is built yet; the next step is **M0**.
+
+**The owner's answers that shape the build** (2026-11-24; detail in handoff §2):
+
+- No gateway access from development sessions. The owner tests on the VPN and can
+  paste back only short output, so every VPN-side command prints ≤ 20 lines.
+- Python first.
+- Internal libraries come from the venv and Artifactory.
+- Linux and Docker on the VPN host.
+- **About 25 requests per minute** on the gateway: requests, not tokens, are the
+  scarce resource, so there is a central limiter with priorities and every review
+  has a request budget.
+- The Qwen licence is no concern.
 
 **Why there is a v2.** The owner's brief (2026-11-23): the reviewer is not good
 enough and prompt tuning will not fix it. It does not explore code, cannot follow a
@@ -51,20 +65,12 @@ limits were sized for qwen3:8b at 16k context and never revisited.
   sandboxed builds and tests), one thread agent for replies and re-checks, repo
   memory in a git repo of markdown, full traces with replay.
 
-**What is blocked, and on whom:** six questions to the owner are open (design doc
-§12): gateway access (this environment cannot reach LiteLLM, so neither model has
-been run — the model plan is a stated hypothesis, not a recommendation), the
-languages of the reviewed repos, how internal libraries are distributed, the VPN
-host's OS and container support, gateway capacity, and a legal read of the Qwen
-model's licence.
+**Neither model has been run.** The dev environment cannot reach the gateway, so
+the model roles (GLM investigates; Qwen runs finders and the first verifier) are a
+hypothesis. M1's probe, which the owner runs on the VPN, and the optional scorecards
+after M6 and M7 settle it.
 
-**Next, once approved:** R0 (a gateway probe run on the VPN) and R1 (the riskiest bet
-— cross-repository investigation plus adversarial verification on four scenarios —
-built and measured in isolation). See design doc §10. Do not start R3 or later
-before R1's gate passes.
-
-**Two repository problems found and deliberately not yet fixed** (they are the
-first commit of R1):
+**Three repository problems found and deliberately not yet fixed** (they are M0):
 
 - The root `.gitignore` ignores `lib/` (Python template), which drops
   `agent/vendor/github.com/lib/pq` from git. An offline `go build` from a fresh clone
@@ -72,6 +78,9 @@ first commit of R1):
 - `go vet` / `go test ./...` fail at `17ca1f6`:
   `internal/pkg/store/file/job_store_test.go:283` was not updated when
   `UpdateCompleted` gained a `ReplyVerdict` parameter. Everything else passes.
+- `pytest` fails one test on Linux:
+  `tests/test_eval.py::test_posix_and_windows_paths_compare_equal`. `eval/score.py:222`
+  relies on `Path.as_posix()` turning `\` into `/`, which only happens on Windows.
 
 The survey behind the design — every candidate cloned and its code read — is in
 [`docs/reviewer-v2/survey/`](docs/reviewer-v2/survey/README.md). The rest of this
@@ -465,27 +474,32 @@ qwen3.6.
       thread verdicts in `17ca1f6`); superseded as the goal by v2.
 - [ ] ~~F7 — Pilot~~ — moved to v2 R6.
 
-**v2** (design: [`docs/reviewer-v2.md`](docs/reviewer-v2.md) §10):
+**v2** (plan: [`docs/reviewer-v2-handoff.md`](docs/reviewer-v2-handoff.md) §7, which
+replaced the design doc's R0-R6):
 
 - [x] **V2.0 — Diagnosis, survey, design.** Brief verified against the code,
       ten open-source agents surveyed by reading their code, both gateway models
       researched from their published templates. *(2026-11-24)*
-- [ ] **Approval of the direction** by the owner. *(blocking everything below)*
-- [ ] **R0 — Gateway probe** on the VPN: limits, reasoning echo, soak test, concurrency.
-- [ ] **R1 — The riskiest bet**: investigation + adversarial verification on
-      scenarios 1-4, our loop vs Qwen Code vs OpenHands SDK, ×3 runs. Has a gate.
-- [ ] **R2 — Thread agent** on scenarios 5-9.
-- [ ] **R3 — Into the control plane**; old brain deleted.
-- [ ] **R4 — Reach**: dependency repos, language servers, sandboxed runs.
-- [ ] **R5 — Memory and calibration.**
-- [ ] **R6 — Ship** offline, then pilot.
+- [x] **Direction approved; owner's answers in; implementation handoff written.**
+      Verified offline packaging of tree-sitter (pinned 0.13.0), jedi and
+      basedpyright; vendored both models' chat templates for offline tests.
+      *(2026-11-24)*
+- [ ] **M0** repo hygiene · [ ] **M1** gateway probe (owner runs it) ·
+      [ ] **M2** brain skeleton + LLM layer · [ ] **M3** code intelligence + Python
+      dependency source · [ ] **M4** agent runtime · [ ] **M5** scenarios, scorer,
+      scorecard, Claude Code references · [ ] **M6** review workflow (offer the
+      owner an S1-S4 scorecard) · [ ] **M7** thread agent (S5-S9) · [ ] **M8** into
+      the Go control plane, old brain deleted · [ ] **M9** sandboxed execution ·
+      [ ] **M10** memory · [ ] **M11** observability · [ ] **M12** offline delivery,
+      egress test → the owner's final test
 
 ---
 
 ## Next up
 
-**v2 (2026-11-24): get the design approved, answer the six questions in its §12,
-then R0 and R1.** The v1 text below is kept as history.
+**v2 (2026-11-24): M0, then M1 — and send the owner the probe as soon as it runs
+against the fake gateway.** Do not block on the owner's reply; the model defaults
+come from the templates (handoff §3.3). The v1 text below is kept as history.
 
 *(v1, 2026-08-31)* **F6: deploy. Everything else is done.** All local work is finished — there is
 nothing left that can be attempted without the VPN, and `DEPLOY.md` is the
@@ -539,15 +553,21 @@ model before deciding whether more is needed; the remaining two may simply be an
 
 ## Key decisions
 
-**v2 — proposed 2026-11-24, not yet approved.** Full reasoning in
-`docs/reviewer-v2.md`; the short form:
+**v2 — approved 2026-11-24.** Full reasoning in `docs/reviewer-v2.md`; the
+build-shaping ones from the owner's answers are in `docs/reviewer-v2-handoff.md` §3.
+Short form:
 
-| Decision (proposed) | Why |
+| Decision | Why |
 |---|---|
+| **Requests are scarce, tokens are free** | The gateway allows ~25 RPM. So: a central limiter with priorities (replies first), evidence packs built by code instead of exploratory tool turns, sequential verification, 6-7 finders, and a per-review request budget (~300). |
+| **No model in the development loop; compact VPN checks** | Dev sessions cannot reach the gateway, and the owner can only paste short output. Mechanics are tested against a fake gateway and the real chat templates; quality is tested through ≤ 20-line probes and scorecards on the VPN. |
+| **Python dependency source = venv + Artifactory** | That is how internal libraries reach consumers (owner). Version bumps are reviewed by diffing the two unpacked versions. |
+| **jedi for precise Python references** | Pure Python, verified offline, resolves into site-packages where the internal libraries are. basedpyright is the measured alternative. |
+| **Sandbox = sibling Docker containers started by the control plane** | The VPN host has Docker; the brain never holds the Docker socket or the gateway key. |
 | **Replace the brain, keep the Go control plane** | Every quality problem in the brief is in the part that thinks; the control plane carries hard-won VPN knowledge (go-git Basic-auth transport, webhook, stores) and nobody complained about it. |
 | **The brain is Python, one subprocess per job, JSON contract** | The v1 "Go is acceptable" decision rested on "review behaviour is prompt text". It no longer is: the brain is now the product, and the team writes Python. Also matches the code we borrow from and lets `eval/` drive the brain with no GitLab. |
 | **The review workflow lives in code, not in a prompt** | Every pipeline surveyed that works in practice does this; Qwen Code moved its gates into a CLI after a prose-orchestrated review approved a PR no agent had read. A flash model is worse at prose orchestration than a frontier one. |
-| **Our own agent loop; Qwen Code and the OpenHands SDK as measured challengers** | The loop is small for a read-only reviewer; its hard parts exist under MIT/Apache and can be copied. We must own the exact message format the two models need. Air-gapped upgrades make fast-moving dependencies expensive. But a mature harness might investigate better — so R1 measures it, and we switch if it does. |
+| **Our own agent loop; challengers optional** | The loop is small for a read-only reviewer; its hard parts exist under MIT/Apache and can be copied. We must own the exact message format the two models need. Air-gapped upgrades make fast-moving dependencies expensive. A mature harness might investigate better; the bake-off against Qwen Code and the OpenHands SDK is kept possible (one `Engine` interface) but run only if the scorecard blames our loop, because it costs the owner VPN runs. |
 | **Two adversarial verifiers per finding, one per model; fail closed** | Same-model errors correlate and there is no stronger model to check with. A verifier that errors counts as a refutation. |
 | **Anchor from a quoted snippet, never from a model's line number** | A derived line beats an asserted one, and it addresses the F5.1 drift. |
 | **No model recommendation until the gateway is measured** | This environment cannot reach it. The owner asked not to guess. The design states a hypothesis (GLM investigates, Qwen is the second voice) and the test that decides. |
@@ -795,12 +815,20 @@ model before deciding whether more is needed; the remaining two may simply be an
 
 ```
 docs/
+  reviewer-v2-handoff.md THE v2 IMPLEMENTATION PLAN. Owner's constraints, decisions
+                         in force, verified facts, milestones M0-M12 with "done
+                         when", the nine scenarios specified. Start here to build.
   reviewer-v2.md         THE v2 DESIGN. Diagnosis with file:line evidence, the
-                         engine decision, models, architecture, scenarios,
-                         build plan, open questions. Start here.
+                         engine decision, models, architecture, scenarios.
+                         The reasoning behind the handoff.
   reviewer-v2/survey/    The open-source survey notes behind it, one file per
                          project pair, code-cited at a named commit. models.md
-                         holds the day-one gateway checklist for R0.
+                         holds the gateway checklist the M1 probe implements.
+
+tests/fixtures/chat_templates/
+                         Both gateway models' real chat templates + parity cases
+                         (from SGLang, pinned HF revisions), for offline tests of
+                         how the brain shapes messages.
 
 agent/
   NOTICE.md              Fork provenance + running list of our changes. Update it.

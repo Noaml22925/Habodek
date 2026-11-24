@@ -1,8 +1,24 @@
 # Habodek reviewer v2 — design proposal
 
-**Status: proposal, awaiting approval. Nothing here is built yet.**
-Written 2026-11-24 against `17ca1f6`. Survey evidence is in
-[`reviewer-v2/survey/`](reviewer-v2/survey/README.md).
+**Status: direction approved 2026-11-24; implementation starts from
+[`reviewer-v2-handoff.md`](reviewer-v2-handoff.md).** Written 2026-11-24 against
+`17ca1f6`. Survey evidence is in [`reviewer-v2/survey/`](reviewer-v2/survey/README.md).
+
+> **The owner's answers to §12 changed parts of this design, and the handoff wins
+> where the two differ.** In short:
+> - No gateway from development sessions; the owner tests on the VPN and can paste
+>   back only short output.
+> - Python first (C/C++ later, low priority).
+> - Internal libraries come from the venv and Artifactory, not from GitLab tags.
+> - Linux and Docker on the VPN host.
+> - **About 25 requests per minute** on the gateway, which makes requests, not
+>   tokens, the scarce resource.
+> - The Qwen licence is no concern.
+>
+> Affected: §4.3 (how the models get tested), §6.3 (dependency source), §6.4 (tier 2
+> is jedi), §6.6 (fewer finders, sequential verification, request budgets), §6.11
+> (sandbox = sibling containers), §7 (delivery), §8 (time), §10 (plan), §12
+> (answered).
 
 The target, from the brief: a background reviewer whose thinking is equivalent to
 opening Claude Code on the repository and asking "review this MR and post
@@ -85,9 +101,9 @@ Claude Code would: go to the code, verify, change its mind only on evidence.
   posted verdicts (`internal/core/review/verdict.go`); `DEPLOY.md` described the new
   behaviour, the roadmap the old one. Fixed in this change.
 
-The build and test problems are one-line fixes. I have not made them, because the
-brief asks to approve the direction before building; they are the first commit of
-R1.
+The build and test problems are one-line fixes, left for milestone M0 of the
+handoff, which also lists a third: a Python test that fails on Linux because of a
+Windows-only path assumption.
 
 ---
 
@@ -792,6 +808,13 @@ wheelhouse plus static binaries, the way `HANDOFF.md` moves Python today (§12).
 
 ## 8. How long a review takes
 
+> **Superseded by the 25 RPM answer** — see the handoff §3.1. At ~25 requests per
+> minute the request count, not latency, sets the time: a typical MR is budgeted at
+> ~250 requests, which comes to **15-30 minutes** with an empty queue. A reply takes
+> **2-5 minutes** and is prioritised. The whole service manages **about 4-6 typical
+> reviews an hour**. The estimate below assumed ample concurrency and is kept only
+> for the record.
+
 Estimated, not measured; the gateway's throughput and concurrency decide it, and R0
 measures both. Assumptions: a thinking turn of 1-3k output tokens at 60-150
 tokens/s; prefill up to ~100k tokens mostly served from prefix cache after the first
@@ -859,6 +882,12 @@ cannot test what this redesign is for.
 
 ## 10. Build plan — riskiest bet first
 
+> **Superseded by the handoff §7 (milestones M0-M12).** No gateway in development
+> means the riskiest bet is measured on the VPN by the owner, compactly: an early
+> probe (M1) and optional scorecards after the review (M6) and thread (M7)
+> milestones. The engine bake-off is optional (handoff §3.7). The reasoning below
+> still holds.
+
 The riskiest bet is not the orchestration or the tools; those are engineering. It is
 this: **that a flash model, through our gateway, can hold a 30-60-call investigation
 across repositories without losing the thread, and that the other model can refute
@@ -914,22 +943,15 @@ else matters, so it is tested first and in isolation.
 
 ---
 
-## 12. Questions for you
+## 12. Questions — answered 2026-11-24
 
-These change what gets built.
+| # | Question | Owner's answer |
+|---|---|---|
+| 1 | Gateway access from a dev session | No. The owner tests the whole feature at the end on the VPN; short outputs from a specific command can be pasted back by hand. |
+| 2 | Languages | Python first; C/C++ hoped for later, low priority. |
+| 3 | How internal libraries reach consumers | Installed in the venv it runs in, and available from Artifactory under the VPN. |
+| 4 | The VPN host | Linux with Docker; CPU and RAM available on request. |
+| 5 | Gateway capacity | About 25 requests per minute. |
+| 6 | The Qwen licence | No concern. |
 
-1. **Gateway access.** This environment cannot reach the LiteLLM gateway, so nothing
-   has run against either model, and §4.3 is a hypothesis rather than a
-   recommendation. Can I get a route to it from a dev session (a host and key), or
-   should R0 be a script you run on the VPN machine and send me the output of?
-2. **Which languages are the reviewed repositories in?** It decides the language
-   servers, the toolchain images for `run(cmd)`, and the language of the scenarios.
-3. **How do internal libraries reach their consumers?** Separate GitLab repos pulled
-   by tag, an internal package registry (which?), a monorepo, submodules? It decides
-   the resolver in §6.3.
-4. **The VPN host:** OS, Docker or Podman, CPU and RAM, and whether there is an
-   internal container registry and package mirrors (Go proxy, PyPI, npm). It decides
-   how the brain ships and whether `run(cmd)` can build arbitrary repositories.
-5. **Gateway capacity for the bot:** concurrent requests and tokens per minute.
-6. **The Qwen licence:** can someone in legal read the Qwen3.8-Flash-Next licence
-   for internal code-review use?
+What each answer changes, and the questions still open, are in the handoff §2.
