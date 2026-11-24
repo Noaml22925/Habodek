@@ -21,7 +21,7 @@ class Config:
     llm_base_url: str = ""
     llm_token: str = ""
     models_yaml: Path | None = None
-    rpm: float = 25.0  # the brain's own limiter; the control plane's proxy is the real one
+    rpm: float = 25.0  # per model (the gateway limits per model); the proxy is the real fence
     rpm_burst: float = 2.0
     request_timeout_s: float = 900.0
     evidence_pack_tokens: int = 80_000

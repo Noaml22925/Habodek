@@ -32,11 +32,11 @@ def _home() -> Path:
 def _client(trace, limiter=None):
     from habodek.brain.config import Config
     from habodek.brain.llm.client import LLMClient
-    from habodek.brain.llm.limiter import RateLimiter
+    from habodek.brain.llm.limiter import LimiterPool
     from habodek.brain.llm.profiles import load_profiles
 
     config = Config.from_env()
-    limiter = limiter or RateLimiter(config.rpm, burst=config.rpm_burst)
+    limiter = limiter or LimiterPool(config.rpm, burst=config.rpm_burst)
     return LLMClient(config.llm_base_url or None, config.llm_token,
                      profiles=load_profiles(config.models_yaml), limiter=limiter, trace=trace,
                      timeout=config.request_timeout_s)
@@ -104,12 +104,12 @@ def _cmd_local_job(args: argparse.Namespace) -> int:
 def _cmd_scorecard(args: argparse.Namespace) -> int:
     from eval.scenarios.specs import select
     from habodek.brain.config import Config
-    from habodek.brain.llm.limiter import RateLimiter
+    from habodek.brain.llm.limiter import LimiterPool
     from habodek.brain.llm.profiles import load_profiles
     from habodek.brain.trace.scorecard import run_scorecard
 
     config = Config.from_env()
-    limiter = RateLimiter(config.rpm, burst=config.rpm_burst)  # shared by every run
+    limiter = LimiterPool(config.rpm, burst=config.rpm_burst)  # per model, shared by every run
     roles = load_profiles(config.models_yaml).roles
     models_line = (f"inv={roles.get('investigator')} fin/verA={roles.get('finder')}"
                    if roles.get("finder") == roles.get("verifier_a")

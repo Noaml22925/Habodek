@@ -72,6 +72,13 @@ after M6 and M7 settle it.
 
 **Progress log (newest first).**
 
+- **Owner's answers (2026-11-24, after M7):** the gateway limits **per model**, and
+  the VPN Artifactory **proxies PyPI**. The brain's limiter is now a `LimiterPool`
+  (one AIMD bucket per model: a 429 on Qwen does not slow GLM); the M8 proxy must
+  key its limiter by model too. M12 builds images on the VPN from Artifactory. The
+  brain can be installed on the VPN with `pip install` (index = Artifactory), so the
+  scorecards can be offered now. Handoff §2 updated.
+
 - **M7 done (2026-11-24).** The thread agent, in `habodek/brain/thread/`.
   - `linemap.py`: maps a finding-time `path:line` to HEAD through
     `diff(finding_sha, HEAD)`: unchanged / moved / changed (pointing at the code that

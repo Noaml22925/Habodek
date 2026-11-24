@@ -21,7 +21,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from habodek.brain.llm.limiter import RateLimiter, parse_retry_after
+from habodek.brain.llm.limiter import LimiterPool, RateLimiter, parse_retry_after
 from habodek.brain.llm.profiles import Profiles, load_profiles
 from habodek.brain.llm.shaping import ToolSpec, Turn, parse_response, shape_request
 from habodek.brain.trace.writer import NullTrace, TraceWriter
@@ -74,7 +74,7 @@ class LLMClient:
         api_key: str | None = None,
         *,
         profiles: Profiles | None = None,
-        limiter: RateLimiter | None = None,
+        limiter: RateLimiter | LimiterPool | None = None,
         trace: TraceWriter | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 900.0,
@@ -112,6 +112,11 @@ class LLMClient:
         self.close()
 
     # ---------------------------------------------------------------- one request
+    def _limiter_for(self, body: dict[str, Any]) -> RateLimiter | None:
+        if isinstance(self.limiter, LimiterPool):
+            return self.limiter.for_model(str(body.get("model", "")))
+        return self.limiter
+
     def _url(self) -> str:
         if self.base_url.endswith("/chat/completions"):
             return self.base_url
@@ -132,7 +137,8 @@ class LLMClient:
         while True:
             if budget is not None:
                 budget.charge(1)
-            waited = self.limiter.acquire(priority) if self.limiter else 0.0
+            limiter = self._limiter_for(body)
+            waited = limiter.acquire(priority) if limiter else 0.0
             self.stats.requests += 1
             request_event = self.trace.event(
                 "llm_request", priority=priority, waited_s=round(waited, 3),
@@ -167,8 +173,8 @@ class LLMClient:
                 throttles += 1
                 self.stats.throttled += 1
                 retry_after = parse_retry_after(response.headers.get("retry-after"))
-                if self.limiter:
-                    self.limiter.on_throttle(retry_after)
+                if limiter:
+                    limiter.on_throttle(retry_after)
                 else:
                     self._sleep(retry_after or self.backoff_base ** min(throttles, 6))
                 if throttles > self.max_throttle_retries:
@@ -193,8 +199,8 @@ class LLMClient:
             if isinstance(payload.get("error"), dict) and not payload.get("choices"):
                 raise GatewayError(f"gateway error payload: {_error_message(payload, text)}",
                                    response.status_code, text[:4000])
-            if self.limiter:
-                self.limiter.on_success()
+            if limiter:
+                limiter.on_success()
             usage = payload.get("usage") or {}
             self.stats.prompt_tokens += int(usage.get("prompt_tokens") or 0)
             self.stats.completion_tokens += int(usage.get("completion_tokens") or 0)

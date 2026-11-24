@@ -237,3 +237,14 @@ def test_gateway_model_alias_comes_from_env():
     profiles = load_profiles(env={"HABODEK_MODEL_QWEN": "company/qwen-flash"})
     assert profiles.get(QWEN).gateway_model == "company/qwen-flash"
     assert profiles.get("company/qwen-flash").name == QWEN
+
+
+def test_a_429_on_one_model_does_not_slow_the_other():
+    from habodek.brain.llm.limiter import LimiterPool
+
+    pool = LimiterPool(rpm=6000, burst=5, default_backoff=0.01)
+    _, client = make({QWEN: [fg.throttled(0.01), fg.say("q")], GLM: [fg.say("g")]},
+                     limiter=pool)
+    assert client.complete(QWEN, USER, TOOLS).content == "q"
+    assert client.complete(GLM, USER, TOOLS).content == "g"
+    assert pool.for_model(QWEN).throttles == 1 and pool.for_model(GLM).throttles == 0

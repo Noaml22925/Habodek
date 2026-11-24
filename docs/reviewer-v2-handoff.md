@@ -53,11 +53,15 @@ The owner's answers to design §12:
 Unknowns to settle with a **one-line question** to the owner when they matter
 (not before):
 
-- Is 25 RPM per key, per model, or total? (Changes the limiter's shape, §3.1.)
+- ~~Is 25 RPM per key, per model, or total?~~ **Per model** (owner, 2026-11-24). The
+  limiter is one bucket per model (`LimiterPool` in the brain; the M8 proxy must do the
+  same), and with two models the service has roughly 50 RPM in all — throughput
+  estimates in §3.1 roughly double when both models are busy.
 - What are the exact model names on the gateway? (Needed for the probe, M1.)
-- Does the VPN Artifactory also proxy public PyPI and Docker images? (Decides
-  between "build on the VPN from Artifactory" and "ship a wheelhouse plus saved
-  images", M12.)
+- ~~Does the VPN Artifactory also proxy public PyPI?~~ **Yes** (owner, 2026-11-24).
+  M12 ships Dockerfiles that build on the VPN with `pip` pointed at Artifactory; no
+  wheelhouse to carry. (Whether it also proxies Docker base images is still open; ask
+  when writing the Dockerfiles.)
 - Is "the venv it runs in" the bot's own venv, or the reviewed project's venv on
   the same host? (§3.5 supports both through configuration; ask when wiring it.)
 

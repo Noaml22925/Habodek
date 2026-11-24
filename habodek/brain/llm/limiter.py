@@ -139,3 +139,32 @@ def parse_retry_after(value: str | None) -> float | None:
         return max(0.0, float(value))
     except ValueError:
         return None  # HTTP-date form: fall back to our own backoff
+
+
+class LimiterPool:
+    """One `RateLimiter` per gateway model.
+
+    The gateway's limit is per model (owner, 2026-11-24): a 429 from one model must not
+    slow the other, and two models give two budgets of requests per minute. Each model
+    gets its own bucket, priorities and AIMD state, created on first use.
+    """
+
+    def __init__(self, rpm: float = 25.0, **kwargs: object) -> None:
+        self.rpm = rpm
+        self.kwargs = kwargs
+        self._limiters: dict[str, RateLimiter] = {}
+        self._lock = threading.Lock()
+
+    def for_model(self, model: str) -> RateLimiter:
+        with self._lock:
+            limiter = self._limiters.get(model)
+            if limiter is None:
+                limiter = self._limiters[model] = RateLimiter(self.rpm, **self.kwargs)
+            return limiter
+
+    @property
+    def throttles(self) -> int:
+        return sum(lim.throttles for lim in self._limiters.values())
+
+    def models(self) -> list[str]:
+        return sorted(self._limiters)

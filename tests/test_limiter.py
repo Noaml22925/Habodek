@@ -70,3 +70,16 @@ def test_retry_after_parsing():
     assert parse_retry_after("1.5") == 1.5
     assert parse_retry_after(None) is None
     assert parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT") is None
+
+
+def test_pool_keeps_models_independent():
+    from habodek.brain.llm.limiter import LimiterPool
+
+    pool = LimiterPool(rpm=1200, burst=1)
+    pool.for_model("qwen").on_throttle(5.0)  # qwen paused for 5 s
+    start = time.monotonic()
+    pool.for_model("glm").acquire()  # glm is not slowed
+    assert time.monotonic() - start < 0.5
+    assert pool.for_model("qwen").rpm == 600 and pool.for_model("glm").rpm == 1200
+    assert pool.for_model("qwen") is pool.for_model("qwen")
+    assert pool.throttles == 1 and pool.models() == ["glm", "qwen"]
