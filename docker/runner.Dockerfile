@@ -1,7 +1,11 @@
 # The sandbox runner image (M9): what repository code runs in.
 #
 #   docker build -f docker/runner.Dockerfile -t habodek-runner:latest \
+#       --build-arg PYTHON_IMAGE=artifactory.example/docker-remote/python:3.12-slim \
 #       --build-arg PIP_INDEX_URL=https://artifactory.example/api/pypi/pypi/simple docker/
+#
+# On the VPN both come from Artifactory, which proxies Docker Hub and PyPI: the image
+# builds there, nothing is carried in.
 #
 # The control plane starts it twice per revision (internal/pkg/sandbox): env-prep
 # builds the repository's venv on the internal network (pip -> Artifactory), and each

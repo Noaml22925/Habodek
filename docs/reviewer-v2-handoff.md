@@ -60,8 +60,11 @@ Unknowns to settle with a **one-line question** to the owner when they matter
 - What are the exact model names on the gateway? (Needed for the probe, M1.)
 - ~~Does the VPN Artifactory also proxy public PyPI?~~ **Yes** (owner, 2026-11-24).
   M12 ships Dockerfiles that build on the VPN with `pip` pointed at Artifactory; no
-  wheelhouse to carry. (Whether it also proxies Docker base images is still open; ask
-  when writing the Dockerfiles.)
+  wheelhouse to carry.
+- ~~Does it also proxy Docker base images?~~ **Yes** (owner, 2026-11-24). Every image
+  builds on the VPN host from Artifactory: Dockerfiles take the base image as a build
+  argument (`PYTHON_IMAGE`, …) pointing at the Artifactory Docker registry, and nothing
+  is carried in by `docker save`.
 - Is "the venv it runs in" the bot's own venv, or the reviewed project's venv on
   the same host? (§3.5 supports both through configuration; ask when wiring it.)
 
@@ -574,7 +577,7 @@ S5-S9 scorecard.
 
 ### M12 — Offline delivery and the egress test
 - Dockerfiles for control, brain and runner.
-- `docker/build_bundle.sh` for the owner's internet-connected machine. It produces images (`docker save`), a wheelhouse for CPython 3.12 manylinux x86_64, checksums and a licence report. Or, if the VPN Artifactory proxies PyPI and Docker, Dockerfiles that build on the VPN.
+- **Build on the VPN** (the Artifactory there proxies both PyPI and Docker base images, owner 2026-11-24): Dockerfiles whose base images and pip index are build arguments pointing at Artifactory, and a `docker/build.sh` that builds all three images on the VPN host and prints ≤ 20 lines. No `docker save` bundle and no wheelhouse. A licence report is still produced (from the installed packages).
 - **The egress test.** The full scenario suite runs with an audit hook (Python) and a network namespace (on the owner's side) that permit only the stub gateway; any other connection attempt fails the build.
 - Update `HANDOFF.md` and `DEPLOY.md` for v2.
 - **Done when:** the owner can install from the bundle by following `DEPLOY.md`.

@@ -112,8 +112,9 @@ after M6 and M7 settle it.
     a GitLab comment that cites the failing run. 208 Python tests pass.
   - *Not verified here:* the Docker backend (no daemon in the dev container): its
     argument lists are unit-tested, the runner image has never been built. The owner's
-    first Docker run is the real check. Open, for M12: whether the VPN Artifactory
-    proxies Docker base images (the Dockerfile takes `PYTHON_IMAGE`); and if the
+    first Docker run is the real check. The VPN Artifactory proxies Docker base images
+    (owner, 2026-11-24), so the runner image builds there with `--build-arg
+    PYTHON_IMAGE=<artifactory registry>/python:3.12-slim`. Open, for M12: if the
     control plane itself runs in a container, `Docker.MapPath` must translate its
     paths to the host's (the field exists, no configuration sets it yet).
   - *Learned:* the `Local` backend's venvs see the host interpreter's site-packages
