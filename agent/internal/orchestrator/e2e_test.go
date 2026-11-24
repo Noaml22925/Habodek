@@ -211,6 +211,22 @@ func TestEndToEnd(t *testing.T) {
 	if !sawThread {
 		t.Fatal("no thread result")
 	}
+	// Observability (M11): every run left its inputs, and the review renders as HTML.
+	for _, m := range results {
+		dir := filepath.Dir(m)
+		if _, err := os.Stat(filepath.Join(dir, "run.json")); err != nil {
+			t.Fatalf("no run.json in %s", dir)
+		}
+		var res brain.Result
+		data, _ := os.ReadFile(m)
+		if json.Unmarshal(data, &res) == nil && res.Kind == "review" {
+			out, err := exec.Command("habodek-brain", "trace", "show", dir).CombinedOutput()
+			page, _ := os.ReadFile(filepath.Join(dir, "trace.html"))
+			if err != nil || !strings.Contains(string(page), "Hypothesis tree") {
+				t.Fatalf("trace show: %v %s", err, out)
+			}
+		}
+	}
 	// The proxy recorded the raw traffic of both jobs, without the gateway key.
 	matches, _ := filepath.Glob(filepath.Join(traces, "*", "llm-proxy.jsonl"))
 	if len(matches) != 3 { // review, map, reply

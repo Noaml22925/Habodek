@@ -17,6 +17,7 @@ import (
 
 	"habodek/internal/app"
 	"habodek/internal/config"
+	"habodek/internal/orchestrator"
 	"habodek/internal/pkg/llmproxy"
 	"habodek/internal/pkg/logger"
 	"habodek/internal/pkg/sandbox"
@@ -55,6 +56,8 @@ func main() {
 	})
 	// The brain's only route to the models: per-job tokens, per-model limits, raw traces.
 	r.Post(llmproxy.Path, a.Proxy.ServeHTTP)
+	// Acceptance per category and the bars it raises (M11): GET /internal/metrics?project=ID
+	r.Get("/internal/metrics", orchestrator.MetricsHandler(a.Store, a.Worker.Config.Bars))
 	// Repository code runs only here, in throwaway containers (M9); same per-job tokens.
 	if a.Sandbox != nil {
 		r.Post(sandbox.Path, a.Sandbox.ServeHTTP)

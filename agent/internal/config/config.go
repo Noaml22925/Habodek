@@ -24,6 +24,16 @@ type Config struct {
 	Brain   BrainConfig
 	Sandbox SandboxConfig
 	Memory  MemoryConfig
+	Bars    BarsConfig
+}
+
+// BarsConfig: automatic bar-raising from acceptance (M11, design §6.10).
+type BarsConfig struct {
+	Disabled      bool
+	Window        int
+	MinOutcomes   int
+	MajorBelow    float64
+	CriticalBelow float64
 }
 
 // MemoryConfig: the habodek-memory repository (M10). Dir "" or "none" disables memory.
@@ -180,6 +190,12 @@ func Load() (*Config, error) {
 	}
 	cfg.Memory.MaxConsumers = envIntOrDefault("HABODEK_MAX_CONSUMERS", 5)
 	cfg.Memory.MapDebounce = envIntOrDefault("HABODEK_MAP_DEBOUNCE_MIN", 10)
+
+	cfg.Bars.Disabled = strings.EqualFold(os.Getenv("HABODEK_BARS"), "off")
+	cfg.Bars.Window = envIntOrDefault("HABODEK_BAR_WINDOW", 50)
+	cfg.Bars.MinOutcomes = envIntOrDefault("HABODEK_BAR_MIN_OUTCOMES", 5)
+	cfg.Bars.MajorBelow = envFloatOrDefault("HABODEK_BAR_MAJOR_BELOW", 0.5)
+	cfg.Bars.CriticalBelow = envFloatOrDefault("HABODEK_BAR_CRITICAL_BELOW", 0.25)
 
 	cfg.Log.Level = strings.ToLower(envOrDefault("LOG_LEVEL", "info"))
 	cfg.Log.Format = strings.ToLower(envOrDefault("LOG_FORMAT", "json"))

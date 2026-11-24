@@ -31,6 +31,8 @@ def test_go_review_job_validates():
     assert isinstance(job, ReviewJob) and job.contract == CONTRACT_VERSION
     assert job.workspace.other_repos == {"orders-service": "/w/orders"}
     assert job.workspace.dependencies[0].side == "head"
+    (bar,) = job.policy.bars
+    assert (bar.category, bar.min_severity, bar.outcomes) == ("consumers", "critical", 10)
 
 
 def test_go_thread_job_validates():

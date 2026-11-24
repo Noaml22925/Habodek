@@ -20,6 +20,7 @@ import (
 	"habodek/internal/app"
 	"habodek/internal/config"
 	"habodek/internal/core/brain"
+	"habodek/internal/orchestrator"
 	"habodek/internal/pkg/git"
 	"habodek/internal/pkg/gitlab"
 	"habodek/internal/pkg/llmproxy"
@@ -31,7 +32,7 @@ import (
 func main() {
 	_ = godotenv.Load()
 	root := &cobra.Command{Use: "habodek", Short: "Habodek control plane CLI"}
-	root.AddCommand(reviewCmd(), mapCmd(), cloneAllCmd())
+	root.AddCommand(reviewCmd(), mapCmd(), metricsCmd(), cloneAllCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -118,6 +119,52 @@ func mapCmd() *cobra.Command {
 	}
 	cmd.Flags().Int64Var(&projectID, "project", 0, "GitLab project ID")
 	cmd.Flags().StringVar(&branch, "branch", "", "branch to map (default: the project's default branch)")
+	_ = cmd.MarkFlagRequired("project")
+	return cmd
+}
+
+// metricsCmd prints a project's acceptance per category and the bars it raises.
+func metricsCmd() *cobra.Command {
+	var projectID int64
+	cmd := &cobra.Command{
+		Use:   "metrics",
+		Short: "Acceptance of posted findings per category, and the bars it raises",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("config: %w", err)
+			}
+			driver, dsn := cfg.StoreDSN()
+			store, err := orchestrator.Open(driver, dsn)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			bars := orchestrator.BarConfig{Disabled: cfg.Bars.Disabled, Window: cfg.Bars.Window,
+				MinOutcomes: cfg.Bars.MinOutcomes, MajorBelow: cfg.Bars.MajorBelow,
+				CriticalBelow: cfg.Bars.CriticalBelow}
+			stats, err := store.Acceptance(cmd.Context(), projectID, bars)
+			if err != nil {
+				return err
+			}
+			raised := map[string]string{}
+			for _, b := range orchestrator.Bars(stats, bars) {
+				raised[b.Category] = b.MinSeverity + "+"
+			}
+			fmt.Printf("%-16s %6s %5s %8s %8s %7s %10s  %s\n", "category", "posted", "open",
+				"accepted", "withdrawn", "neutral", "acceptance", "bar")
+			for _, a := range stats {
+				rate := "-"
+				if a.Outcomes() > 0 {
+					rate = fmt.Sprintf("%.0f%%", a.Rate*100)
+				}
+				fmt.Printf("%-16s %6d %5d %8d %8d %7d %10s  %s\n", a.Category, a.Posted, a.Open,
+					a.Accepted, a.Rejected, a.Neutral, rate, raised[a.Category])
+			}
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&projectID, "project", 0, "GitLab project ID")
 	_ = cmd.MarkFlagRequired("project")
 	return cmd
 }

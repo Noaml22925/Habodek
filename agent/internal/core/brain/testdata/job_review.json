@@ -35,6 +35,16 @@
     "priority": "review",
     "request_budget": 300,
     "models": {},
-    "max_comments": 6
+    "max_comments": 6,
+    "policy": {
+      "bars": [
+        {
+          "category": "consumers",
+          "min_severity": "critical",
+          "acceptance": 0.2,
+          "outcomes": 10
+        }
+      ]
+    }
   }
 }

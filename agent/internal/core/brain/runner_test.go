@@ -130,6 +130,8 @@ func TestGoldenJob(t *testing.T) {
 	review.Contract = ContractVersion
 	review.Workspace.Dependencies = []DependencyTree{{Name: "payments-lib", Version: "1.5.0",
 		Path: "/deps/payments-lib/1.5.0", Side: "head"}}
+	review.Policy = &Policy{Bars: []CategoryBar{{Category: "consumers", MinSeverity: "critical",
+		Acceptance: 0.2, Outcomes: 10}}}
 	thread := sampleJob()
 	thread.Contract = ContractVersion
 	thread.Kind, thread.JobID, thread.Priority, thread.Event = "thread", "job-43", "reply", "reply"

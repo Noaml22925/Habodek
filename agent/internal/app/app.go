@@ -61,6 +61,9 @@ func Build(cfg *config.Config) (*App, error) {
 	triggers := &orchestrator.Triggers{Store: store, WebhookSecret: cfg.GitLab.WebhookSecret,
 		BotUserID: cfg.GitLab.BotUserID, TriggerLabel: cfg.Review.TriggerLabel,
 		Debounce: time.Duration(cfg.Brain.ReplyDebounceSec) * time.Second}
+	worker.Config.Bars = orchestrator.BarConfig{Disabled: cfg.Bars.Disabled, Window: cfg.Bars.Window,
+		MinOutcomes: cfg.Bars.MinOutcomes, MajorBelow: cfg.Bars.MajorBelow,
+		CriticalBelow: cfg.Bars.CriticalBelow}
 	var mem *memory.Store
 	if cfg.Memory.Dir != "" {
 		if err := os.MkdirAll(cfg.Memory.Dir, 0o755); err != nil {
