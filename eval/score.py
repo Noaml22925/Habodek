@@ -207,6 +207,15 @@ def from_json_file(path: Path) -> dict[str, list[EvalFinding]]:
 ANCHOR_TOLERANCE = 3
 
 
+def _norm_path(path: str) -> str:
+    """Compare paths the same way on every OS.
+
+    `PurePosixPath` leaves a backslash alone, so a Windows-style path reported
+    by a reviewer would never match on Linux. Swap separators explicitly.
+    """
+    return Path(path.replace("\\", "/")).as_posix()
+
+
 def matches(expected: ExpectedFinding, finding: EvalFinding) -> bool:
     """Whether a reported finding counts as having found a planted flaw.
 
@@ -219,7 +228,7 @@ def matches(expected: ExpectedFinding, finding: EvalFinding) -> bool:
     readings are correct. This is not a loosening of the standard: the keyword
     gate below is what enforces "right reason", and it is untouched.
     """
-    if Path(finding.file).as_posix() != Path(expected.file).as_posix():
+    if _norm_path(finding.file) != _norm_path(expected.file):
         return False
     if not expected.covers(
         finding.line_start - ANCHOR_TOLERANCE, finding.line_end + ANCHOR_TOLERANCE

@@ -280,7 +280,7 @@ func TestReplyJobStorePersistsThreadStates(t *testing.T) {
 	if err := store.Create(context.Background(), job); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if err := store.UpdateCompleted(context.Background(), job.ID, "thanks", domain.IntentAgree, domain.FeedbackSignalAccepted, domain.ThreadStateOpen, domain.ThreadStatePendingVerification); err != nil {
+	if err := store.UpdateCompleted(context.Background(), job.ID, "thanks", domain.IntentAgree, domain.VerdictStands, domain.FeedbackSignalAccepted, domain.ThreadStateOpen, domain.ThreadStatePendingVerification); err != nil {
 		t.Fatalf("UpdateCompleted() error = %v", err)
 	}
 

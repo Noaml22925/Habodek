@@ -18,7 +18,7 @@ diff lines, answers reviewer replies, and re-checks its own threads after a fix
 implementation plan (milestones M0-M12, each with "done when"), with the owner's
 constraints and the facts already verified. Then read
 [`docs/reviewer-v2.md`](docs/reviewer-v2.md), the design and its reasoning. Where the
-two differ, the handoff wins. Nothing of v2 is built yet; the next step is **M0**.
+two differ, the handoff wins. Progress is logged below; the next milestone is the first one not marked done.
 
 **The owner's answers that shape the build** (2026-11-24; detail in handoff §2):
 
@@ -70,17 +70,18 @@ the model roles (GLM investigates; Qwen runs finders and the first verifier) are
 hypothesis. M1's probe, which the owner runs on the VPN, and the optional scorecards
 after M6 and M7 settle it.
 
-**Three repository problems found and deliberately not yet fixed** (they are M0):
+**Progress log (newest first).**
 
-- The root `.gitignore` ignores `lib/` (Python template), which drops
-  `agent/vendor/github.com/lib/pq` from git. An offline `go build` from a fresh clone
-  fails. It worked on the VPN machine only because the tree went across as a zip.
-- `go vet` / `go test ./...` fail at `17ca1f6`:
-  `internal/pkg/store/file/job_store_test.go:283` was not updated when
-  `UpdateCompleted` gained a `ReplyVerdict` parameter. Everything else passes.
-- `pytest` fails one test on Linux:
-  `tests/test_eval.py::test_posix_and_windows_paths_compare_equal`. `eval/score.py:222`
-  relies on `Path.as_posix()` turning `\` into `/`, which only happens on Windows.
+- **M0 done (2026-11-24).** The root `.gitignore` rules `lib/`/`lib64/` are anchored
+  to the root, so `agent/vendor/github.com/lib/pq` is now committed; the stale
+  `UpdateCompleted` call in `job_store_test.go` passes a `ReplyVerdict`;
+  `eval/score.py` swaps `\\` for `/` itself instead of relying on `as_posix()`.
+  Verified from a fresh clone: offline `go build` (empty `GOMODCACHE`,
+  `GOPROXY=off`), `go vet`, `go test -race`, `pytest` (42 passed), `ruff`.
+  *Learned:* `agent/go.mod` says `go 1.25.5`; with `GOPROXY=off` a machine whose
+  Go is older cannot fetch the toolchain, so the VPN build needs Go ≥ 1.25.5
+  installed (or `GOTOOLCHAIN=local` with that Go on `PATH`). The Docker build
+  image in M12 must pin it.
 
 The survey behind the design — every candidate cloned and its code read — is in
 [`docs/reviewer-v2/survey/`](docs/reviewer-v2/survey/README.md). The rest of this
