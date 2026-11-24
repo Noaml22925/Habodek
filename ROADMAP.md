@@ -2,7 +2,8 @@
 
 Automatic code review for our GitLab merge requests, on the company LiteLLM
 gateway. Reads the change *and its surrounding context*, opens threads on exact
-diff lines, answers reviewer replies, resolves its own threads when addressed.
+diff lines, answers reviewer replies, and re-checks its own threads after a fix
+(stating a verdict; resolving stays the developer's call).
 
 > **This file is the handoff document.** Context is reset between sessions and this
 > is the only thing the next session gets. Keep it standing on its own: update it as
@@ -10,12 +11,82 @@ diff lines, answers reviewer replies, resolves its own threads when addressed.
 
 ---
 
-## Current state
+## Current state — 2026-11-24: reviewer v2 proposed, awaiting approval
+
+**Read [`docs/reviewer-v2.md`](docs/reviewer-v2.md) first.** It is the design for
+the next version and supersedes the direction described in the rest of this file.
+Nothing in it is built yet: the owner asked to approve the direction before any
+building starts, and that approval has not been given.
+
+**Why there is a v2.** The owner's brief (2026-11-23): the reviewer is not good
+enough and prompt tuning will not fix it. It does not explore code, cannot follow a
+bug across libraries, has no reasoning process, and cannot verify a fix or a
+developer's claim. The target is a reviewer whose thinking is equivalent to Claude
+Code reviewing the repository, running unattended. The brief explicitly released us
+from every earlier decision — the fork, the language, the architecture, the metrics.
+That is the "new evidence" the fork decision below asked for.
+
+**What the investigation found** (cited in the design doc, §2): the review that
+runs is two single LLM calls that see the changed files through ±12-line windows and
+are told not to look further. Verification evidence is fetched once, blind, and
+truncated to the first 60 lines of each file. `search_code` cannot search for
+`Foo(`. `reasoning_content` is discarded on every call. The 9-tool agent loop is
+never called. Replies and re-checks are single calls that read ±20/±30 lines at a
+stale line number. A fix in another file never triggers a re-check. Most of these
+limits were sized for qwen3:8b at 16k context and never revisited.
+
+**What is proposed** (design doc §0 has the full summary):
+
+- Keep the Go control plane (webhook, queue, GitLab, git transport, stores); replace
+  everything that thinks with a new Python "brain" run per job over a JSON contract.
+- Run the review as a fixed workflow in code: understand → ~10 parallel finders
+  producing hypotheses → one investigator per hypothesis → mechanical evidence checks
+  → two adversarial verifiers per finding, one per model → judge. Fail closed.
+- Write our own small agent loop, but take its model-specific behaviour from
+  MIT/Apache code (OpenHands, Hermes, Goose, Qwen Code). Run Qwen Code headless and
+  the OpenHands SDK as measured challengers in the first build step, and switch if
+  either wins.
+- A real exploration toolset (tree-sitter + ripgrep references and callers, a change
+  map, language servers, git history, other repositories at the right version,
+  sandboxed builds and tests), one thread agent for replies and re-checks, repo
+  memory in a git repo of markdown, full traces with replay.
+
+**What is blocked, and on whom:** six questions to the owner are open (design doc
+§12): gateway access (this environment cannot reach LiteLLM, so neither model has
+been run — the model plan is a stated hypothesis, not a recommendation), the
+languages of the reviewed repos, how internal libraries are distributed, the VPN
+host's OS and container support, gateway capacity, and a legal read of the Qwen
+model's licence.
+
+**Next, once approved:** R0 (a gateway probe run on the VPN) and R1 (the riskiest bet
+— cross-repository investigation plus adversarial verification on four scenarios —
+built and measured in isolation). See design doc §10. Do not start R3 or later
+before R1's gate passes.
+
+**Two repository problems found and deliberately not yet fixed** (they are the
+first commit of R1):
+
+- The root `.gitignore` ignores `lib/` (Python template), which drops
+  `agent/vendor/github.com/lib/pq` from git. An offline `go build` from a fresh clone
+  fails. It worked on the VPN machine only because the tree went across as a zip.
+- `go vet` / `go test ./...` fail at `17ca1f6`:
+  `internal/pkg/store/file/job_store_test.go:283` was not updated when
+  `UpdateCompleted` gained a `ReplyVerdict` parameter. Everything else passes.
+
+The survey behind the design — every candidate cloned and its code read — is in
+[`docs/reviewer-v2/survey/`](docs/reviewer-v2/survey/README.md). The rest of this
+file is the v1 record, kept because it explains how the project got here and holds
+operational knowledge (the local rig, the VPN transport, GitLab and Ollama gotchas)
+that v2 still needs.
+
+---
+
+## v1 state (2026-08-31 → 2026-09-06)
 
 **The project is now a fork of [gitlab-review-agent][upstream] (Go, MIT), not a
 from-scratch Python build.** That decision was made 2026-08-31 after evaluating
-three options; the reasoning is under *Key decisions* below and should not be
-relitigated without new evidence.
+three options; the reasoning is under *Key decisions* below. *(2026-11-24: reopened
+by the owner's v2 brief — see above.)*
 
 ```
 agent/     The reviewer. Go. Forked at upstream ab50d4f, module renamed to
@@ -388,15 +459,35 @@ qwen3.6.
       run-to-run variance exceeds any prompt change we have made, so single-run
       A/B on this rig proves nothing; `LLM_SEED` was added to fix that. Anchor
       distance is now measured. *(2026-08-31)*
-- [ ] **F6 — Deploy.** Real GitLab, real LiteLLM, bot account, webhook secret.
+- [~] **F6 — Deploy.** Real GitLab, real LiteLLM, bot account, webhook secret.
       **Work from `DEPLOY.md`**, which is the whole checklist. *(needs VPN)*
-- [ ] **F7 — Pilot** on one friendly repo, then widen.
+      Partly done on the VPN machine (2026-09-02 → 09-06: go-git transport,
+      thread verdicts in `17ca1f6`); superseded as the goal by v2.
+- [ ] ~~F7 — Pilot~~ — moved to v2 R6.
+
+**v2** (design: [`docs/reviewer-v2.md`](docs/reviewer-v2.md) §10):
+
+- [x] **V2.0 — Diagnosis, survey, design.** Brief verified against the code,
+      ten open-source agents surveyed by reading their code, both gateway models
+      researched from their published templates. *(2026-11-24)*
+- [ ] **Approval of the direction** by the owner. *(blocking everything below)*
+- [ ] **R0 — Gateway probe** on the VPN: limits, reasoning echo, soak test, concurrency.
+- [ ] **R1 — The riskiest bet**: investigation + adversarial verification on
+      scenarios 1-4, our loop vs Qwen Code vs OpenHands SDK, ×3 runs. Has a gate.
+- [ ] **R2 — Thread agent** on scenarios 5-9.
+- [ ] **R3 — Into the control plane**; old brain deleted.
+- [ ] **R4 — Reach**: dependency repos, language servers, sandboxed runs.
+- [ ] **R5 — Memory and calibration.**
+- [ ] **R6 — Ship** offline, then pilot.
 
 ---
 
 ## Next up
 
-**F6: deploy. Everything else is done.** All local work is finished — there is
+**v2 (2026-11-24): get the design approved, answer the six questions in its §12,
+then R0 and R1.** The v1 text below is kept as history.
+
+*(v1, 2026-08-31)* **F6: deploy. Everything else is done.** All local work is finished — there is
 nothing left that can be attempted without the VPN, and `DEPLOY.md` is the
 checklist for what remains, written to be worked through top to bottom.
 
@@ -447,6 +538,21 @@ model before deciding whether more is needed; the remaining two may simply be an
 ---
 
 ## Key decisions
+
+**v2 — proposed 2026-11-24, not yet approved.** Full reasoning in
+`docs/reviewer-v2.md`; the short form:
+
+| Decision (proposed) | Why |
+|---|---|
+| **Replace the brain, keep the Go control plane** | Every quality problem in the brief is in the part that thinks; the control plane carries hard-won VPN knowledge (go-git Basic-auth transport, webhook, stores) and nobody complained about it. |
+| **The brain is Python, one subprocess per job, JSON contract** | The v1 "Go is acceptable" decision rested on "review behaviour is prompt text". It no longer is: the brain is now the product, and the team writes Python. Also matches the code we borrow from and lets `eval/` drive the brain with no GitLab. |
+| **The review workflow lives in code, not in a prompt** | Every pipeline surveyed that works in practice does this; Qwen Code moved its gates into a CLI after a prose-orchestrated review approved a PR no agent had read. A flash model is worse at prose orchestration than a frontier one. |
+| **Our own agent loop; Qwen Code and the OpenHands SDK as measured challengers** | The loop is small for a read-only reviewer; its hard parts exist under MIT/Apache and can be copied. We must own the exact message format the two models need. Air-gapped upgrades make fast-moving dependencies expensive. But a mature harness might investigate better — so R1 measures it, and we switch if it does. |
+| **Two adversarial verifiers per finding, one per model; fail closed** | Same-model errors correlate and there is no stronger model to check with. A verifier that errors counts as a refutation. |
+| **Anchor from a quoted snippet, never from a model's line number** | A derived line beats an asserted one, and it addresses the F5.1 drift. |
+| **No model recommendation until the gateway is measured** | This environment cannot reach it. The owner asked not to guess. The design states a hypothesis (GLM investigates, Qwen is the second voice) and the test that decides. |
+
+**v1** (2026-08-31):
 
 | Decision | Why |
 |---|---|
@@ -510,7 +616,13 @@ model before deciding whether more is needed; the remaining two may simply be an
 
 **About the agent, learned by running it:**
 
-- **Auto-resolve needed a tolerance window. Fixed 2026-08-31.**
+- **Auto-resolve is gone (since `17ca1f6`, 2026-09-06).** The bot no longer
+  resolves threads at all; after a push it re-reads each open thread and posts a
+  verdict reply (stands / withdrawn / fixed / fix_incomplete / unclear) —
+  `internal/core/review/verdict.go`, documented in `DEPLOY.md` §6. The next two
+  bullets are the history that led there. v2's thread agent keeps "never resolve"
+  (design doc §6.7).
+- **Auto-resolve needed a tolerance window. Fixed 2026-08-31** *(superseded, see above)*.
   `autoResolveFixedThreads` in `internal/core/review/pipeline.go` used to resolve
   a bot thread only when the thread's file *and exact line* appeared in the new
   diff's added lines. In the live test the bot anchored its SQL-injection thread
@@ -682,6 +794,14 @@ model before deciding whether more is needed; the remaining two may simply be an
 ## Where things live
 
 ```
+docs/
+  reviewer-v2.md         THE v2 DESIGN. Diagnosis with file:line evidence, the
+                         engine decision, models, architecture, scenarios,
+                         build plan, open questions. Start here.
+  reviewer-v2/survey/    The open-source survey notes behind it, one file per
+                         project pair, code-cited at a named commit. models.md
+                         holds the day-one gateway checklist for R0.
+
 agent/
   NOTICE.md              Fork provenance + running list of our changes. Update it.
   README.md              Our config: LiteLLM, GitLab, cost controls, maintenance.
