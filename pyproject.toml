@@ -1,13 +1,15 @@
 [project]
 name = "habodek"
 version = "0.1.0"
-description = "Evaluation harness for the Habodek GitLab review agent."
+description = "Habodek: a GitLab merge-request reviewer (the brain) and its evaluation harness."
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.7",
     "typer>=0.12",
     "rich>=13.7",
     "pyyaml>=6.0",
+    "httpx>=0.27",
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +21,7 @@ dev = [
 
 [project.scripts]
 habodek = "habodek.cli:app"
+habodek-brain = "habodek.brain.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -26,6 +29,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["habodek*", "eval*"]
+
+[tool.setuptools.package-data]
+"habodek.brain" = ["llm/*.yaml", "workflow/roles/*.md"]
 
 [tool.ruff]
 line-length = 100
@@ -36,6 +42,11 @@ extend-exclude = ["eval/corpus"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# The probe runs on the VPN machine's system python3, whatever its age: it keeps to
+# old-style formatting on purpose.
+"probe/gateway_probe.py" = ["UP031", "UP032"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

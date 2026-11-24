@@ -1,0 +1,52 @@
+# Per-model behaviour, in one place. Everything the brain does differently per model
+# is read from here; code never branches on a model name.
+#
+# Source of each rule: the models' chat templates (tests/fixtures/chat_templates/,
+# checked by tests/test_llm_templates.py) and docs/reviewer-v2/survey/models.md.
+# The gateway probe (probe/gateway_probe.py, run on the VPN) confirms or corrects
+# them; update this file from its output and note the date.
+#
+# Status: template-derived defaults, 2026-11-24. Not yet confirmed against the gateway.
+
+profiles:
+  qwen3.8-flash-next:
+    gateway_model: qwen3.8-flash-next      # the alias on the LiteLLM gateway; env HABODEK_MODEL_QWEN overrides
+    fallback: glm-5.3-flash                # who takes a run over after repeated degenerate turns
+    reasoning_echo: every_assistant_turn   # template: preserve_thinking defaults to true
+    reasoning_field: reasoning_content
+    effort: {param: reasoning_effort, allowed: [xhigh, medium, low], default: xhigh}
+    never_send: [thinking]                 # LiteLLM maps it to values the template rejects -> 400
+    system_messages: first_only            # template raises on a later one -> 400
+    sampling: {temperature: 1.0, top_p: 0.95, extra_body: {top_k: 20}}
+    context_window: 131072                 # conservative until /model/info is read on the VPN
+    max_output_tokens: 32768
+  glm-5.3-flash:
+    gateway_model: glm-5.3-flash           # env HABODEK_MODEL_GLM overrides
+    fallback: qwen3.8-flash-next
+    reasoning_echo: every_assistant_turn   # template: clear_thinking=false keeps earlier reasoning
+    reasoning_field: reasoning_content
+    effort: {param: reasoning_effort, allowed: [low, high, max], default: max}   # unknown -> max silently
+    never_send: []
+    thinking: always_on                    # cannot be disabled
+    system_messages: first_only            # the template tolerates later ones; we never send them anyway
+    sampling: {temperature: 1.0, top_p: 0.95}
+    context_window: 131072
+    max_output_tokens: 32768
+
+common:
+  tool_call_turn_content: ""               # never null (GLM rendered "None" -> loops)
+  validate_tool_args_before_history: true  # vLLM silently turns bad args into {}
+  degenerate: {retries: 2, then: other_model}
+
+# Which model plays which role. A hypothesis until the probe and the scorecards
+# say otherwise (design §4.3). Roles are configuration, never code.
+roles:
+  understand: glm-5.3-flash
+  finder: qwen3.8-flash-next
+  investigator: glm-5.3-flash
+  verifier_a: qwen3.8-flash-next
+  verifier_b: glm-5.3-flash
+  judge: glm-5.3-flash
+  thread: glm-5.3-flash
+  thread_challenger: qwen3.8-flash-next
+  cartographer: qwen3.8-flash-next

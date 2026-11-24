@@ -72,6 +72,32 @@ after M6 and M7 settle it.
 
 **Progress log (newest first).**
 
+- **M1 + M2 done (2026-11-24).** The brain's LLM layer and the gateway probe.
+  - `habodek/brain/llm/`: `models.yaml` (all per-model rules and the role map),
+    `shaping.py` (reasoning echoed every turn, `content: ""` on tool turns, no late
+    system message, effort from an allow-list, `thinking` never sent; responses
+    normalised from any reasoning field or inline `<think>`; tool arguments validated
+    against their schema before they enter history; degenerate turns detected),
+    `client.py` (httpx; 429/`Retry-After`, 5xx backoff, 400 not retried; degenerate →
+    2 retries → the other model; every HTTP request charged to the caller's budget;
+    every request and response traced), `limiter.py` (priority token bucket, AIMD),
+    `fake_gateway.py` (scripted; MockTransport and a real HTTP server; SSE).
+  - `contract.py` (job/result, exported as JSON Schema by `habodek-brain schema`),
+    `config.py`, `cli.py` skeleton, `trace/writer.py`.
+  - `probe/gateway_probe.py` + `probe/README.md`: stdlib only, parses as Python 3.8,
+    12 summary lines for two models, raw log and results on the VPN machine.
+    **Waiting on the owner** to run it (M1); `models.yaml` stays template-derived
+    until then.
+  - Tests: `tests/chat_template.py` renders requests through the real templates and
+    matches the parity fixtures byte for byte on every case shaped like ours; the
+    fake gateway uses it as its validator, so a shape a model would reject is a 400
+    in tests too. `tests/conftest.py` installs an audit hook that fails any
+    non-loopback connection. 100 tests pass.
+  - *Learned:* the vendored GLM template renders `content: null` as empty, not
+    "None" (the survey's "None" came from another engine/revision); we still send
+    `""`. New runtime deps `httpx` and `jinja2` are pure-Python wheels with no
+    network at import (tests import them under the audit hook).
+
 - **M0 done (2026-11-24).** The root `.gitignore` rules `lib/`/`lib64/` are anchored
   to the root, so `agent/vendor/github.com/lib/pq` is now committed; the stale
   `UpdateCompleted` call in `job_store_test.go` passes a `ReplyVerdict`;
