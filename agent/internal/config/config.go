@@ -19,6 +19,24 @@ type Config struct {
 	Tool   ToolConfig
 	Cron   CronConfig
 	Log    LogConfig
+	Brain  BrainConfig
+}
+
+// BrainConfig configures the Python brain (reviewer v2) and the LLM proxy in front of
+// the gateway. The brain never sees the gateway key or the GitLab token.
+type BrainConfig struct {
+	Command          string // habodek-brain executable
+	WorkDir          string // per-job worktrees and job.json
+	TraceDir         string // per-job traces (kept)
+	ProxyURL         string // how the brain reaches this server's LLM proxy
+	GatewayURL       string // LiteLLM base URL (defaults to OPENAI_BASE_URL)
+	GatewayKey       string // LiteLLM key (defaults to OPENAI_API_KEY)
+	GatewayRPM       float64
+	TimeoutMinutes   int
+	InternalPackages string // passed to the brain (HABODEK_INTERNAL_PACKAGES)
+	PipIndexURL      string // Artifactory simple index for dependency source
+	MaxComments      int
+	ReplyDebounceSec int
 }
 
 type GitConfig struct {
@@ -225,6 +243,20 @@ func Load() (*Config, error) {
 	cfg.Cron.FeedbackConsolidateMinCount = envIntOrDefault("FEEDBACK_CONSOLIDATE_MIN_COUNT", 30)
 	cfg.Cron.FeedbackConsolidateMinAgeDays = envIntOrDefault("FEEDBACK_CONSOLIDATE_MIN_AGE_DAYS", 14)
 	cfg.Cron.FeedbackCustomPromptMaxWords = envIntOrDefault("FEEDBACK_CUSTOM_PROMPT_MAX_WORDS", 800)
+
+	cfg.Brain.Command = envOrDefault("HABODEK_BRAIN_CMD", "habodek-brain")
+	cfg.Brain.WorkDir = envOrDefault("HABODEK_WORK_DIR", "data/jobs")
+	cfg.Brain.TraceDir = envOrDefault("HABODEK_TRACE_DIR", "data/traces")
+	cfg.Brain.ProxyURL = envOrDefault("HABODEK_PROXY_URL",
+		"http://127.0.0.1:"+envOrDefault("SERVER_PORT", "8080")+"/internal/llm/v1")
+	cfg.Brain.GatewayURL = envOrDefault("HABODEK_GATEWAY_URL", cfg.LLM.OpenAIBaseURL)
+	cfg.Brain.GatewayKey = envOrDefault("HABODEK_GATEWAY_KEY", cfg.LLM.OpenAIAPIKey)
+	cfg.Brain.GatewayRPM = envFloatOrDefault("HABODEK_GATEWAY_RPM", 25)
+	cfg.Brain.TimeoutMinutes = envIntOrDefault("HABODEK_BRAIN_TIMEOUT_MIN", 90)
+	cfg.Brain.InternalPackages = os.Getenv("HABODEK_INTERNAL_PACKAGES")
+	cfg.Brain.PipIndexURL = os.Getenv("HABODEK_PIP_INDEX_URL")
+	cfg.Brain.MaxComments = envIntOrDefault("HABODEK_MAX_COMMENTS", 6)
+	cfg.Brain.ReplyDebounceSec = envIntOrDefault("HABODEK_REPLY_DEBOUNCE_SEC", 60)
 
 	cfg.Log.Level = strings.ToLower(envOrDefault("LOG_LEVEL", "info"))
 	cfg.Log.Format = strings.ToLower(envOrDefault("LOG_FORMAT", "json"))

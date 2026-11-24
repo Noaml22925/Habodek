@@ -65,13 +65,20 @@ def _run_job(job, ws, trace_dir: Path, limiter=None):
 
 def _cmd_job(args: argparse.Namespace) -> int:
     """`review` and `thread`: one job.json in, one result.json out."""
-    from habodek.brain.jobs import load_job, workspace_from_job
+    from habodek.brain.config import Config
+    from habodek.brain.jobs import attach_dependencies, load_job, workspace_from_job
 
     job = load_job(args.job)
     if job.kind != args.command:
         print(f"{args.job} is a {job.kind} job; use `habodek-brain {job.kind}`", file=sys.stderr)
         return 2
-    result = _run_job(job, workspace_from_job(job), Path(args.trace or "trace"))
+    ws = workspace_from_job(job)
+    config = Config.from_env()
+    log = attach_dependencies(job, ws, config.internal_packages, config.deps_cache,
+                              config.pip_index_url, config.pip_find_links)
+    for line in log:
+        print(f"deps: {line}", file=sys.stderr)
+    result = _run_job(job, ws, Path(args.trace or "trace"))
     Path(args.out or "result.json").write_text(result.model_dump_json(indent=2))
     if result.thread:
         print(f"{result.status}: {result.thread.verdict}, {result.requests} requests")

@@ -129,6 +129,14 @@ func (c *Client) GetMR(ctx context.Context, projectID, mrIID int64) (*domain.Git
 		Author       struct {
 			Username string `json:"username"`
 		} `json:"author"`
+		Labels   []string `json:"labels"`
+		Draft    bool     `json:"draft"`
+		WIP      bool     `json:"work_in_progress"`
+		DiffRefs struct {
+			BaseSHA  string `json:"base_sha"`
+			StartSHA string `json:"start_sha"`
+			HeadSHA  string `json:"head_sha"`
+		} `json:"diff_refs"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("unmarshal MR: %w", err)
@@ -143,6 +151,10 @@ func (c *Client) GetMR(ctx context.Context, projectID, mrIID int64) (*domain.Git
 		HeadSHA:        raw.SHA,
 		WebURL:         raw.WebURL,
 		AuthorUsername: raw.Author.Username,
+		Labels:         raw.Labels,
+		Draft:          raw.Draft || raw.WIP,
+		DiffRefs: domain.DiffRefs{BaseSHA: raw.DiffRefs.BaseSHA, StartSHA: raw.DiffRefs.StartSHA,
+			HeadSHA: raw.DiffRefs.HeadSHA},
 	}, nil
 }
 
@@ -223,17 +235,24 @@ func (c *Client) GetDiscussion(ctx context.Context, projectID, mrIID int64, disc
 
 func (c *Client) PostInlineComment(ctx context.Context, req domain.PostInlineCommentRequest) (*domain.PostCommentResponse, error) {
 	path := fmt.Sprintf("/projects/%d/merge_requests/%d/discussions", req.ProjectID, req.MrIID)
-	body := map[string]any{
-		"body": req.Body,
-		"position": map[string]any{
-			"base_sha":      req.BaseSHA,
-			"head_sha":      req.HeadSHA,
-			"start_sha":     req.StartSHA,
-			"position_type": "text",
-			"new_path":      req.FilePath,
-			"new_line":      req.NewLine,
-		},
+	position := map[string]any{
+		"base_sha":      req.BaseSHA,
+		"head_sha":      req.HeadSHA,
+		"start_sha":     req.StartSHA,
+		"position_type": "text",
+		"new_path":      req.FilePath,
+		"old_path":      req.FilePath,
 	}
+	if req.OldPath != "" {
+		position["old_path"] = req.OldPath
+	}
+	if req.NewLine > 0 {
+		position["new_line"] = req.NewLine
+	}
+	if req.OldLine > 0 {
+		position["old_line"] = req.OldLine
+	}
+	body := map[string]any{"body": req.Body, "position": position}
 
 	data, _, err := c.doRequest(ctx, http.MethodPost, path, body)
 	if err != nil {

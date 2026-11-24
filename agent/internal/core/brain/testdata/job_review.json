@@ -1,0 +1,40 @@
+{
+  "job": {
+    "contract": 1,
+    "kind": "review",
+    "job_id": "job-42",
+    "mr": {
+      "project": "team/svc",
+      "iid": 7,
+      "title": "Change",
+      "labels": [
+        "ai-review"
+      ],
+      "web_url": "https://gitlab.example/team/svc/-/merge_requests/7"
+    },
+    "revisions": {
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "workspace": {
+      "head": "/w/head",
+      "base": "/w/base",
+      "repo": "/w/repo",
+      "dependencies": [
+        {
+          "name": "payments-lib",
+          "version": "1.5.0",
+          "path": "/deps/payments-lib/1.5.0",
+          "side": "head"
+        }
+      ],
+      "other_repos": {
+        "orders-service": "/w/orders"
+      }
+    },
+    "priority": "review",
+    "request_budget": 300,
+    "models": {},
+    "max_comments": 6
+  }
+}

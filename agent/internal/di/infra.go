@@ -7,6 +7,7 @@ import (
 	"habodek/internal/domain"
 	"habodek/internal/pkg/git"
 	"habodek/internal/pkg/gitlab"
+	"habodek/internal/pkg/llmproxy"
 	"habodek/internal/pkg/queue"
 	"habodek/internal/pkg/store"
 )
@@ -21,7 +22,17 @@ var InfraPackage = do.Package(
 	do.Lazy(provideGitLabClient),
 	do.Lazy(provideGitManager),
 	do.Lazy(provideJobQueue),
+	do.Lazy(provideLLMProxy),
 )
+
+func provideLLMProxy(i do.Injector) (*llmproxy.Proxy, error) {
+	cfg := do.MustInvoke[*config.Config](i)
+	return llmproxy.New(llmproxy.Config{
+		UpstreamURL: cfg.Brain.GatewayURL,
+		GatewayKey:  cfg.Brain.GatewayKey,
+		RPM:         cfg.Brain.GatewayRPM,
+	}), nil
+}
 
 func provideStores(i do.Injector) (*store.Stores, error) {
 	cfg := do.MustInvoke[*config.Config](i)

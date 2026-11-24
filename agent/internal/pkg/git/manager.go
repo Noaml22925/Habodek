@@ -626,3 +626,27 @@ func (m *Manager) runGitOutput(ctx context.Context, dir string, args ...string) 
 	}
 	return string(out), nil
 }
+
+// AddWorktree checks out sha into dir as a detached worktree of the project's mirror.
+// The brain reads real files (ripgrep, tree-sitter, jedi), so each job gets worktrees
+// for head and merge base; they are disposable.
+func (m *Manager) AddWorktree(ctx context.Context, projectID int64, sha, dir string) error {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
+	return m.runGit(ctx, m.RepoPath(projectID), "worktree", "add", "--detach", "--force", dir, sha)
+}
+
+// RemoveWorktree deletes a worktree created by AddWorktree.
+func (m *Manager) RemoveWorktree(ctx context.Context, projectID int64, dir string) error {
+	err := m.runGit(ctx, m.RepoPath(projectID), "worktree", "remove", "--force", dir)
+	_ = os.RemoveAll(dir)
+	_ = m.runGit(ctx, m.RepoPath(projectID), "worktree", "prune")
+	return err
+}
+
+// MergeBase returns the merge base of two revisions in the project's mirror.
+func (m *Manager) MergeBase(ctx context.Context, projectID int64, a, b string) (string, error) {
+	out, err := m.runGitOutput(ctx, m.RepoPath(projectID), "merge-base", a, b)
+	return strings.TrimSpace(out), err
+}

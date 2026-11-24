@@ -26,6 +26,7 @@ class Config:
     request_timeout_s: float = 900.0
     evidence_pack_tokens: int = 80_000
     pip_index_url: str = ""  # Artifactory, for pydeps
+    pip_find_links: tuple[str, ...] = ()  # local wheel dirs (offline runs, tests)
     internal_packages: tuple[str, ...] = ()  # names or fnmatch patterns
     deps_cache: Path = field(default_factory=lambda: Path("deps-cache"))
 
@@ -44,6 +45,8 @@ class Config:
             request_timeout_s=_float(env, "HABODEK_LLM_TIMEOUT", 900.0),
             evidence_pack_tokens=int(_float(env, "HABODEK_EVIDENCE_TOKENS", 80_000)),
             pip_index_url=env.get("HABODEK_PIP_INDEX_URL", ""),
+            pip_find_links=tuple(p for p in env.get("HABODEK_PIP_FIND_LINKS", "").split(",")
+                                 if p.strip()),
             internal_packages=internal,
             deps_cache=Path(env.get("HABODEK_DEPS_CACHE", "deps-cache")),
         )

@@ -21,6 +21,7 @@ import (
 	"habodek/internal/handler/cron"
 	"habodek/internal/handler/webhook"
 	"habodek/internal/handler/worker"
+	"habodek/internal/pkg/llmproxy"
 	"habodek/internal/pkg/queue"
 )
 
@@ -72,6 +73,8 @@ func main() {
 	r.Use(middleware.RealIP)
 	r.Post("/webhook/gitlab", webhookHandler.HandleGitLabEvent)
 	r.Get("/health", webhookHandler.HandleHealth)
+	// The brain's only route to the models: per-job tokens, per-model limits, raw traces.
+	r.Post(llmproxy.Path, do.MustInvoke[*llmproxy.Proxy](injector).ServeHTTP)
 
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
 	server := &http.Server{

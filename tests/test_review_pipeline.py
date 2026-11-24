@@ -178,3 +178,27 @@ def test_scorecard_cli_end_to_end_over_http(built, tmp_path, monkeypatch, capsys
     assert "SILENT 1/1" in lines[3] and "SILENT 1/1" in lines[4]
     assert "found 2/2  silent 2/2" in lines[5]
     assert (tmp_path / "card" / "s1" / "run1" / "trace" / "events.jsonl").is_file()
+
+
+def test_review_cli_resolves_dependencies_itself(built, tmp_path, monkeypatch, capsys):
+    """Production jobs carry no dependency source: the brain fetches it (§3.5)."""
+    from habodek.brain import cli
+    from habodek.brain.jobs import save_job
+
+    job, _ = prepare(built, "2", tmp_path / "work", "cli")
+    job.workspace.dependencies = []
+    save_job(job, tmp_path / "job.json")
+    gateway = fg.FakeGateway(ScriptedModel(built), validator=validator)
+    with gateway.serve() as url:
+        for key, value in {"HABODEK_LLM_BASE_URL": url, "HABODEK_RPM": "6000",
+                           "HABODEK_INTERNAL_PACKAGES": "payments-lib,platform-common",
+                           "HABODEK_PIP_FIND_LINKS": str(built / "index"),
+                           "HABODEK_DEPS_CACHE": str(tmp_path / "cache")}.items():
+            monkeypatch.setenv(key, value)
+        code = cli.main(["review", "--job", str(tmp_path / "job.json"), "--out",
+                         str(tmp_path / "result.json"), "--trace", str(tmp_path / "trace")])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert "payments-lib==1.5.0: downloaded" in captured.err
+    result = json.loads((tmp_path / "result.json").read_text())
+    assert len(result["comments"]) == 1

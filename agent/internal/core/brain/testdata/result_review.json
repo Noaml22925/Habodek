@@ -1,0 +1,147 @@
+{
+  "contract": 1,
+  "job_id": "s1-good",
+  "run_id": "r-20261124T172428-f89fc9",
+  "kind": "review",
+  "status": "ok",
+  "reason": "",
+  "comments": [
+    {
+      "finding_id": "f50eb79d90b",
+      "path": "platform_common/store/users.py",
+      "line": 28,
+      "side": "new",
+      "body": "\ud83d\udfe0 **get_user() now returns None for a missing user, and callers dereference it.**\n\nget_user returns None instead of raising NotFound.\n\n- `platform_common/store/users.py:28` \u2014 `return None` \u2014 returns None where it raised\n- `platform_common/cache/users.py:27` \u2014 `except NotFound:` \u2014 misses no longer negatively cached\n- orders-service `orders/api/profile.py:17` \u2014 `return Response(200, {\"email\": user.email, \"name\": user.name})` \u2014 AttributeError, 500\n- orders-service `orders/jobs/digest.py:22` \u2014 `notify.send_digest(user.email, orders_store.list_for_user(uid))` \u2014 digest dies\n\n**Scenario:** A deleted user opens their profile: 500 instead of 404.\n\n**Fix:** Keep raising NotFound.\n\n<sub>Checked 6 lenses \u00b7 upheld by two independent verifiers \u00b7 trace `r-20261124T172428-f89fc9`</sub>\n\n<!-- habodek:finding:f50eb79d90b -->",
+      "marker": "<!-- habodek:finding:f50eb79d90b -->"
+    }
+  ],
+  "summary": "One blocking issue found; see the inline comment.\n\nHypotheses investigated: 1; refuted or unconfirmed: 0.\n\nChecked:\n- intent: walked the intent lens: read the changed files and the references of the changed symbols\n- consumers: walked the consumers lens: read the changed files and the references of the changed symbols\n- correctness: walked the correctness lens: read the changed files and the references of the changed symbols\n- failure: walked the failure lens: read the changed files and the references of the changed symbols\n- security: walked the security lens: read the changed files and the references of the changed symbols\n- history: walked the history lens: read the changed files and the references of the changed symbols",
+  "findings": [
+    {
+      "id": "f50eb79d90b",
+      "title": "get_user() now returns None for a missing user, and callers dereference it",
+      "severity": "major",
+      "category": "intent,consumers",
+      "claim": "get_user returns None instead of raising NotFound.",
+      "scenario": "A deleted user opens their profile: 500 instead of 404.",
+      "fix": "Keep raising NotFound.",
+      "anchor": {
+        "path": "platform_common/store/users.py",
+        "line": 28,
+        "side": "new",
+        "snippet": "return None"
+      },
+      "chain": [
+        {
+          "path": "platform_common/store/users.py",
+          "line": 28,
+          "quote": "return None",
+          "claim": "returns None where it raised",
+          "revision": "head",
+          "repo": null
+        },
+        {
+          "path": "platform_common/cache/users.py",
+          "line": 27,
+          "quote": "except NotFound:",
+          "claim": "misses no longer negatively cached",
+          "revision": "head",
+          "repo": null
+        },
+        {
+          "path": "orders/api/profile.py",
+          "line": 17,
+          "quote": "return Response(200, {\"email\": user.email, \"name\": user.name})",
+          "claim": "AttributeError, 500",
+          "revision": "head",
+          "repo": "repo:orders-service"
+        },
+        {
+          "path": "orders/jobs/digest.py",
+          "line": 22,
+          "quote": "notify.send_digest(user.email, orders_store.list_for_user(uid))",
+          "claim": "digest dies",
+          "revision": "head",
+          "repo": "repo:orders-service"
+        }
+      ],
+      "head_sha": "9293cff5d5e615c5643ffbf095f88092223aa354",
+      "verifications": [
+        {
+          "verifier": "verifier_a",
+          "model": "qwen3.8-flash-next",
+          "outcome": "upheld",
+          "reason": "every link checks out and nothing upstream prevents it",
+          "evidence": []
+        },
+        {
+          "verifier": "verifier_b",
+          "model": "glm-5.3-flash",
+          "outcome": "upheld",
+          "reason": "every link checks out and nothing upstream prevents it",
+          "evidence": []
+        }
+      ],
+      "status": "posted",
+      "dropped_at": null,
+      "drop_reason": null
+    }
+  ],
+  "thread": null,
+  "not_investigated": [],
+  "stats": [
+    {
+      "stage": "understand",
+      "requests": 2,
+      "agents": 1,
+      "seconds": 0.1,
+      "notes": "concluded"
+    },
+    {
+      "stage": "hypothesise",
+      "requests": 12,
+      "agents": 6,
+      "seconds": 0.2,
+      "notes": "2 hypotheses"
+    },
+    {
+      "stage": "investigate",
+      "requests": 2,
+      "agents": 1,
+      "seconds": 0.1,
+      "notes": "1 confirmed"
+    },
+    {
+      "stage": "verify_a",
+      "requests": 2,
+      "agents": 1,
+      "seconds": 0.0,
+      "notes": "1/1 upheld"
+    },
+    {
+      "stage": "verify_b",
+      "requests": 2,
+      "agents": 1,
+      "seconds": 0.0,
+      "notes": "1/1 upheld"
+    },
+    {
+      "stage": "reverse_audit",
+      "requests": 2,
+      "agents": 1,
+      "seconds": 0.0,
+      "notes": "concluded"
+    },
+    {
+      "stage": "judge",
+      "requests": 1,
+      "agents": 1,
+      "seconds": 0.0,
+      "notes": "concluded"
+    }
+  ],
+  "requests": 23,
+  "llm": {
+    "requests": 23
+  }
+}

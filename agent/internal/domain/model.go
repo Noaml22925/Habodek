@@ -231,6 +231,17 @@ type GitLabMR struct {
 	HeadSHA        string
 	WebURL         string
 	AuthorUsername string
+	Labels         []string
+	Draft          bool
+	// DiffRefs is GitLab's own view of the diff; a position must use these SHAs, and
+	// posting checks they still match the SHAs that were reviewed.
+	DiffRefs DiffRefs
+}
+
+type DiffRefs struct {
+	BaseSHA  string
+	StartSHA string
+	HeadSHA  string
 }
 
 type GitLabDiscussion struct {
@@ -274,9 +285,13 @@ type PostInlineCommentRequest struct {
 	Body      string
 	FilePath  string
 	NewLine   int
-	BaseSHA   string
-	HeadSHA   string
-	StartSHA  string
+	// OldLine/OldPath: a removed line sets only old_line; a context line sets both
+	// (GitLab rejects a context line positioned by new_line alone).
+	OldLine  int
+	OldPath  string
+	BaseSHA  string
+	HeadSHA  string
+	StartSHA string
 }
 
 type PostCommentResponse struct {
