@@ -10,6 +10,9 @@ dependencies = [
     "pyyaml>=6.0",
     "httpx>=0.27",
     "jinja2>=3.1",
+    # Pinned: the 1.x series downloads grammars at first use (no network on the VPN).
+    "tree-sitter-language-pack==0.13.0",
+    "jedi==0.20.1",
 ]
 
 [project.optional-dependencies]

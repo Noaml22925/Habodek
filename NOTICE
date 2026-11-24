@@ -1,0 +1,23 @@
+Habodek
+=======
+
+The Go control plane in agent/ is a fork of gitlab-review-agent (MIT); its notices
+are in agent/NOTICE.md.
+
+The Python brain (habodek/brain/) uses or adapts ideas from:
+
+- Aider (https://github.com/Aider-AI/aider), Apache License 2.0.
+  habodek/brain/codeintel/repomap.py re-implements the approach of Aider's
+  aider/repomap.py (a file graph from tree-sitter definitions and references,
+  ranked by PageRank personalised to the files and identifiers in focus). No code
+  was copied.
+
+Test fixtures:
+
+- tests/fixtures/chat_templates/ are copied unmodified from SGLang
+  (https://github.com/sgl-project/sglang), Apache License 2.0; the chat templates in
+  them belong to their model authors. Provenance is in that folder's README.
+
+Runtime dependencies (installed, not vendored in this repository): pydantic (MIT),
+httpx (BSD-3-Clause), Jinja2 (BSD-3-Clause), PyYAML (MIT), tree-sitter and
+tree-sitter-language-pack (MIT), jedi and parso (MIT).

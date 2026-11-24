@@ -72,6 +72,37 @@ after M6 and M7 settle it.
 
 **Progress log (newest first).**
 
+- **M3 done (2026-11-24).** Code intelligence for Python and dependency source,
+  in `habodek/brain/codeintel/`.
+  - `workspace.py`: named roots (`head`, `base`, `dep:<pkg>@<ver>`, `repo:<name>`,
+    `site:<n>`) and path specs (`base:store/users.py`) that every tool prints and
+    accepts; worktrees from a local repo; `git log` / `log -L` / `blame` / `show` /
+    `diff`. Reuses `habodek/workspace/diff.py` for the hunk-level change map.
+  - `files.py`: `read` (numbered, 2,000 lines / 100 KB, then pages and says so;
+    several paths per call), `grep` (ripgrep JSON; totals when truncated; refuses
+    > 2,000 matches with advice), `glob`.
+  - `ts_index.py`: tree-sitter tags per file cached by git blob SHA, behind a
+    per-language `Backend` seam (Python now). `refs.py`: `definitions`,
+    `references` (classified call/import/attribute/name, enclosing function,
+    grouped by package), `callers(depth)`, `outline`. Tier 2 = `jedi_backend.py`,
+    with an explicit search path (head, deps, site-packages, stdlib — never the
+    brain's own venv).
+  - `changemap.py`: base vs head syntax trees per changed file: symbols added /
+    removed / modified, signature changes, "no longer raises X", "returns None on N
+    more paths", value changes of constants and enum members.
+  - `repomap.py`: Aider's personalised-PageRank repo map, re-implemented on our tag
+    index (credited in the new root `NOTICE`; no code copied, no networkx needed).
+  - `pydeps.py`: pins from requirements / pyproject (PEP 621, Poetry) / uv, poetry,
+    pdm locks; source from site-packages (exact version) or `pip download --no-deps`
+    into `deps-cache/<pkg>/<ver>/`; base vs head bump → library diff.
+  - *Learned (measured on pip's own source, 495 files / 185K lines):* jedi answers a
+    method's references in ~1 s but returned only the definition, because it cannot
+    infer most receivers' types. Precise-but-incomplete would hide callers, so tier
+    2 now returns jedi's hits **plus** tier-1 lexical matches it could not resolve,
+    marked `?`. Tier 1 alone took 0.06-0.25 s. No reason yet to try basedpyright.
+  - Dependencies declared: `tree-sitter-language-pack==0.13.0`, `jedi==0.20.1`
+    (both exercised under the test audit hook: no network).
+
 - **M1 + M2 done (2026-11-24).** The brain's LLM layer and the gateway probe.
   - `habodek/brain/llm/`: `models.yaml` (all per-model rules and the role map),
     `shaping.py` (reasoning echoed every turn, `content: ""` on tool turns, no late
