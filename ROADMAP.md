@@ -11,7 +11,7 @@ diff lines, answers reviewer replies, and re-checks its own threads after a fix
 
 ---
 
-## Current state — 2026-11-24: reviewer v2 approved, implementation not started
+## Current state — 2026-11-24: reviewer v2 being built; M0-M9 done, next is M10
 
 **If you are the session that builds v2, start with
 [`docs/reviewer-v2-handoff.md`](docs/reviewer-v2-handoff.md).** It is the
@@ -71,6 +71,54 @@ hypothesis. M1's probe, which the owner runs on the VPN, and the optional scorec
 after M6 and M7 settle it.
 
 **Progress log (newest first).**
+
+- **M9 done (2026-11-24).** Sandboxed execution: agents can run the code they review.
+  - `habodek/brain/sandbox/envprep.py` (stdlib only, parses as 3.8; the Go side
+    embeds a byte-identical copy, checked by tests on both sides): builds a revision's
+    venv with `--system-site-packages` (the runner image's pytest stays visible) from
+    its requirement files, `[project].dependencies` and the test/dev groups, plus the
+    recipe. Index options, `-e .`, URLs and nested files outside the repo are dropped:
+    packages come only from the index the control plane sets. The project itself is
+    not installed; runs put their copy on `PYTHONPATH`. Cache key = hash of the
+    dependency files + recipe + interpreter; one fixture pins Go and Python to the
+    same key.
+  - Recipe: a `habodek-sandbox` fenced block in `.habodek.md` (`test:`, `install:`,
+    `tools:`), read from **base** (the target branch) first. Format in
+    `agent/README.md`. Without one, pytest is suggested.
+  - `agent/internal/pkg/sandbox`: `POST /internal/sandbox/v1/run` with the job's LLM
+    token; roots by label only (`head`, `base`, `repo:<name>`; never dependency
+    sources or a path); `files` may add a reproduction test (paths checked); env-prep
+    single-flight per key, failures reported and not cached; throwaway copy without
+    `.git`; output capped; every run logged to `<trace>/sandbox.jsonl`. Backends:
+    `Docker` (env-prep on `HABODEK_SANDBOX_PREP_NETWORK`; runs `--network none
+    --read-only --cap-drop ALL --security-opt no-new-privileges --user 65534`, memory /
+    CPU / PID limits, venv mounted read-only at the path it was built at, `docker rm -f`
+    on timeout) and `Local` (`unshare --user --net --pid`, `prlimit`, cleared env).
+    `HABODEK_SANDBOX=none|local|docker` (default none). The runner registers the job's
+    roots under its token and sets `HABODEK_SANDBOX_URL`. `docker/runner.Dockerfile`.
+  - Brain: `run` tool for investigators, verifiers and both thread roles (finders stay
+    read-only); prompts get a generic `_sandbox.md` section only when a sandbox exists.
+    A conclusion may cite runs as `witnesses`; the check rejects ids not in the run log
+    and the witness is rebuilt from the log (exit code and output never come from the
+    model). New contract field `RunWitness` on `Finding`, `Verification` and
+    `ThreadVerdict` (Go too; golden regenerated). Comments show "Reproduced in the
+    sandbox" with the output folded away. `local-job`/`scorecard --sandbox auto|local|
+    none` (auto = local when `unshare` works; the scorecard header says which).
+  - **Done-when met:** `tests/test_sandbox.py::test_s2_confirmed_by_a_failing_test_run`
+    (S2's `test_declined_cancels` fails at head, passes at base, both cited) and
+    `test_run_cannot_open_a_network_connection` (a listener on the host's own
+    127.0.0.1 is unreachable; DNS fails); the Go side has the same network test, and
+    `HABODEK_E2E=1 TestEndToEnd` now goes label → brain → **Go sandbox endpoint** →
+    a GitLab comment that cites the failing run. 208 Python tests pass.
+  - *Not verified here:* the Docker backend (no daemon in the dev container): its
+    argument lists are unit-tested, the runner image has never been built. The owner's
+    first Docker run is the real check. Open, for M12: whether the VPN Artifactory
+    proxies Docker base images (the Dockerfile takes `PYTHON_IMAGE`); and if the
+    control plane itself runs in a container, `Docker.MapPath` must translate its
+    paths to the host's (the field exists, no configuration sets it yet).
+  - *Learned:* the `Local` backend's venvs see the host interpreter's site-packages
+    (that is how pytest gets in without a download); fine for our fixtures, and one
+    more reason it is dev-only.
 
 - **M8 done (2026-11-24).** The control plane runs reviewer v2; the old brain is gone.
   - `agent/internal/pkg/llmproxy`: `POST /internal/llm/v1/chat/completions`, per-job
@@ -688,22 +736,25 @@ replaced the design doc's R0-R6):
       Verified offline packaging of tree-sitter (pinned 0.13.0), jedi and
       basedpyright; vendored both models' chat templates for offline tests.
       *(2026-11-24)*
-- [ ] **M0** repo hygiene · [ ] **M1** gateway probe (owner runs it) ·
-      [ ] **M2** brain skeleton + LLM layer · [ ] **M3** code intelligence + Python
-      dependency source · [ ] **M4** agent runtime · [ ] **M5** scenarios, scorer,
-      scorecard, Claude Code references · [ ] **M6** review workflow (offer the
-      owner an S1-S4 scorecard) · [ ] **M7** thread agent (S5-S9) · [ ] **M8** into
-      the Go control plane, old brain deleted · [ ] **M9** sandboxed execution ·
-      [ ] **M10** memory · [ ] **M11** observability · [ ] **M12** offline delivery,
+- [x] **M0** repo hygiene · [~] **M1** gateway probe (built; waiting on the owner
+      to run it) · [x] **M2** brain skeleton + LLM layer · [x] **M3** code
+      intelligence + Python dependency source · [x] **M4** agent runtime · [x] **M5**
+      scenarios, scorer, scorecard, Claude Code references · [x] **M6** review
+      workflow (S1-S4 scorecard to offer) · [x] **M7** thread agent (S5-S9) · [x]
+      **M8** into the Go control plane, old brain deleted · [x] **M9** sandboxed
+      execution (Docker backend not yet run on a real daemon) · [ ] **M10** memory · [ ] **M11** observability · [ ] **M12** offline delivery,
       egress test → the owner's final test
 
 ---
 
 ## Next up
 
-**v2 (2026-11-24): M0, then M1 — and send the owner the probe as soon as it runs
-against the fake gateway.** Do not block on the owner's reply; the model defaults
-come from the templates (handoff §3.3). The v1 text below is kept as history.
+**v2 (2026-11-24, after M9): M10, memory** (handoff §7). Still outstanding with the
+owner, none blocking: the M1 gateway probe result, and the S1-S9 scorecard offer
+(`habodek-brain scorecard --scenarios 1-9 --runs 3`; with M9 it uses the local
+sandbox where `unshare` works, and says so in its header). Do not block on the
+owner's reply; the model defaults come from the templates (handoff §3.3). The v1 text
+below is kept as history.
 
 *(v1, 2026-08-31)* **F6: deploy. Everything else is done.** All local work is finished — there is
 nothing left that can be attempted without the VPN, and `DEPLOY.md` is the

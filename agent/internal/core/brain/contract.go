@@ -59,12 +59,25 @@ type Anchor struct {
 	Snippet string `json:"snippet,omitempty"`
 }
 
+// RunWitness is a sandbox run cited as evidence (M9); its facts come from the run log.
+type RunWitness struct {
+	ID         string   `json:"id"`
+	Root       string   `json:"root"`
+	Cmd        string   `json:"cmd"`
+	Files      []string `json:"files,omitempty"`
+	ExitCode   int      `json:"exit_code"`
+	TimedOut   bool     `json:"timed_out,omitempty"`
+	OutputTail string   `json:"output_tail,omitempty"`
+	Shows      string   `json:"shows,omitempty"`
+}
+
 type Verification struct {
-	Verifier string         `json:"verifier"`
-	Model    string         `json:"model"`
-	Outcome  string         `json:"outcome"`
-	Reason   string         `json:"reason,omitempty"`
-	Evidence []EvidenceLink `json:"evidence,omitempty"`
+	Verifier  string         `json:"verifier"`
+	Model     string         `json:"model"`
+	Outcome   string         `json:"outcome"`
+	Reason    string         `json:"reason,omitempty"`
+	Evidence  []EvidenceLink `json:"evidence,omitempty"`
+	Witnesses []RunWitness   `json:"witnesses,omitempty"`
 }
 
 type Finding struct {
@@ -78,6 +91,7 @@ type Finding struct {
 	Anchor        Anchor         `json:"anchor"`
 	Chain         []EvidenceLink `json:"chain,omitempty"`
 	HeadSHA       string         `json:"head_sha,omitempty"`
+	Witnesses     []RunWitness   `json:"witnesses,omitempty"`
 	Verifications []Verification `json:"verifications,omitempty"`
 	Status        string         `json:"status,omitempty"`
 	DroppedAt     *string        `json:"dropped_at,omitempty"`
@@ -136,6 +150,7 @@ type ThreadVerdict struct {
 	Remaining       []EvidenceLink `json:"remaining"`
 	ConvincedBy     []EvidenceLink `json:"convinced_by"`
 	LessonCandidate *string        `json:"lesson_candidate"`
+	Witnesses       []RunWitness   `json:"witnesses,omitempty"`
 }
 
 type StageStat struct {

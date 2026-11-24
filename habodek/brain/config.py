@@ -29,6 +29,7 @@ class Config:
     pip_find_links: tuple[str, ...] = ()  # local wheel dirs (offline runs, tests)
     internal_packages: tuple[str, ...] = ()  # names or fnmatch patterns
     deps_cache: Path = field(default_factory=lambda: Path("deps-cache"))
+    sandbox_cache: Path = field(default_factory=lambda: Path("sandbox-cache"))  # local venvs
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Config:
@@ -49,4 +50,7 @@ class Config:
                                  if p.strip()),
             internal_packages=internal,
             deps_cache=Path(env.get("HABODEK_DEPS_CACHE", "deps-cache")),
+            sandbox_cache=Path(env.get("HABODEK_SANDBOX_CACHE")
+                               or Path(env.get("HABODEK_HOME", Path.home() / ".habodek"))
+                               / "sandbox-cache"),
         )

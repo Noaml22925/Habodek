@@ -1,7 +1,7 @@
 {
   "contract": 1,
   "job_id": "s1-good",
-  "run_id": "r-20261124T172428-f89fc9",
+  "run_id": "r-20261124T194156-1252d9",
   "kind": "review",
   "status": "ok",
   "reason": "",
@@ -11,7 +11,7 @@
       "path": "platform_common/store/users.py",
       "line": 28,
       "side": "new",
-      "body": "\ud83d\udfe0 **get_user() now returns None for a missing user, and callers dereference it.**\n\nget_user returns None instead of raising NotFound.\n\n- `platform_common/store/users.py:28` \u2014 `return None` \u2014 returns None where it raised\n- `platform_common/cache/users.py:27` \u2014 `except NotFound:` \u2014 misses no longer negatively cached\n- orders-service `orders/api/profile.py:17` \u2014 `return Response(200, {\"email\": user.email, \"name\": user.name})` \u2014 AttributeError, 500\n- orders-service `orders/jobs/digest.py:22` \u2014 `notify.send_digest(user.email, orders_store.list_for_user(uid))` \u2014 digest dies\n\n**Scenario:** A deleted user opens their profile: 500 instead of 404.\n\n**Fix:** Keep raising NotFound.\n\n<sub>Checked 6 lenses \u00b7 upheld by two independent verifiers \u00b7 trace `r-20261124T172428-f89fc9`</sub>\n\n<!-- habodek:finding:f50eb79d90b -->",
+      "body": "\ud83d\udfe0 **get_user() now returns None for a missing user, and callers dereference it.**\n\nget_user returns None instead of raising NotFound.\n\n- `platform_common/store/users.py:28` \u2014 `return None` \u2014 returns None where it raised\n- `platform_common/cache/users.py:27` \u2014 `except NotFound:` \u2014 misses no longer negatively cached\n- orders-service `orders/api/profile.py:17` \u2014 `return Response(200, {\"email\": user.email, \"name\": user.name})` \u2014 AttributeError, 500\n- orders-service `orders/jobs/digest.py:22` \u2014 `notify.send_digest(user.email, orders_store.list_for_user(uid))` \u2014 digest dies\n\n**Scenario:** A deleted user opens their profile: 500 instead of 404.\n\n**Fix:** Keep raising NotFound.\n\n<sub>Checked 6 lenses \u00b7 upheld by two independent verifiers \u00b7 trace `r-20261124T194156-1252d9`</sub>\n\n<!-- habodek:finding:f50eb79d90b -->",
       "marker": "<!-- habodek:finding:f50eb79d90b -->"
     }
   ],
@@ -66,20 +66,23 @@
         }
       ],
       "head_sha": "9293cff5d5e615c5643ffbf095f88092223aa354",
+      "witnesses": [],
       "verifications": [
         {
           "verifier": "verifier_a",
           "model": "qwen3.8-flash-next",
           "outcome": "upheld",
           "reason": "every link checks out and nothing upstream prevents it",
-          "evidence": []
+          "evidence": [],
+          "witnesses": []
         },
         {
           "verifier": "verifier_b",
           "model": "glm-5.3-flash",
           "outcome": "upheld",
           "reason": "every link checks out and nothing upstream prevents it",
-          "evidence": []
+          "evidence": [],
+          "witnesses": []
         }
       ],
       "status": "posted",
@@ -94,21 +97,21 @@
       "stage": "understand",
       "requests": 2,
       "agents": 1,
-      "seconds": 0.1,
+      "seconds": 0.0,
       "notes": "concluded"
     },
     {
       "stage": "hypothesise",
       "requests": 12,
       "agents": 6,
-      "seconds": 0.2,
+      "seconds": 0.1,
       "notes": "2 hypotheses"
     },
     {
       "stage": "investigate",
       "requests": 2,
       "agents": 1,
-      "seconds": 0.1,
+      "seconds": 0.0,
       "notes": "1 confirmed"
     },
     {

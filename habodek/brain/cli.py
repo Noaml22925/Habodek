@@ -51,16 +51,43 @@ def _review_config():
                         internal_packages=config.internal_packages)
 
 
-def _run_job(job, ws, trace_dir: Path, limiter=None):
+def _sandbox(ws, mode: str | None = None, find_links: tuple[str, ...] = ()):
+    """The job's sandbox, or None (then agents get no `run` tool).
+
+    Production: the control plane sets HABODEK_SANDBOX_URL. Standalone runs choose with
+    `--sandbox` or HABODEK_SANDBOX (local | auto | none)."""
+    from habodek.brain.config import Config
+    from habodek.brain.sandbox import sandbox_from_env
+
+    config = Config.from_env()
+    env = dict(os.environ)
+    if mode:
+        env["HABODEK_SANDBOX"] = mode
+    roots = {"head": ws.head}
+    if ws.base is not None:
+        roots["base"] = ws.base
+    roots.update({k: v for k, v in ws.extra_roots.items() if k.startswith("repo:")})
+    return sandbox_from_env(env, roots, config.sandbox_cache, config.pip_index_url,
+                            tuple(find_links) or config.pip_find_links)
+
+
+def _run_job(job, ws, trace_dir: Path, limiter=None, sandbox=None):
+    from habodek.brain.sandbox.core import RunLog, recipe_for
     from habodek.brain.thread.agent import run_thread
     from habodek.brain.trace.writer import TraceWriter
     from habodek.brain.workflow.pipeline import run_review
 
     trace = TraceWriter(trace_dir)
+    runs = None
+    if sandbox is not None:
+        roots = ("head", *(("base",) if ws.base is not None else ()),
+                 *sorted(k for k in ws.extra_roots if k.startswith("repo:")))
+        runs = RunLog(sandbox, trace, recipe=recipe_for(ws.head, ws.base), roots=roots)
+        trace.event("sandbox", backend=sandbox.name, roots=list(roots), recipe=runs.recipe)
     with _client(trace, limiter) as client:
         if job.kind == "review":
-            return run_review(job, ws, client, trace, _review_config())
-        return run_thread(job, ws, client, trace)
+            return run_review(job, ws, client, trace, _review_config(), runs=runs)
+        return run_thread(job, ws, client, trace, runs=runs)
 
 
 def _cmd_job(args: argparse.Namespace) -> int:
@@ -78,7 +105,7 @@ def _cmd_job(args: argparse.Namespace) -> int:
                               config.pip_index_url, config.pip_find_links)
     for line in log:
         print(f"deps: {line}", file=sys.stderr)
-    result = _run_job(job, ws, Path(args.trace or "trace"))
+    result = _run_job(job, ws, Path(args.trace or "trace"), sandbox=_sandbox(ws))
     Path(args.out or "result.json").write_text(result.model_dump_json(indent=2))
     if result.thread:
         print(f"{result.status}: {result.thread.verdict}, {result.requests} requests")
@@ -100,7 +127,8 @@ def _cmd_local_job(args: argparse.Namespace) -> int:
     work = Path(args.work or (_home() / "work"))
     job, ws = prepare(built, args.scenario, work, f"local-{int(time.time())}")
     trace_dir = Path(args.trace or (work / f"trace-s{args.scenario}"))
-    result = _run_job(job, ws, trace_dir)
+    sandbox = _sandbox(ws, args.sandbox, (str(built / "index"),))
+    result = _run_job(job, ws, trace_dir, sandbox=sandbox)
     out = Path(args.out or (trace_dir / "result.json"))
     out.write_text(result.model_dump_json(indent=2))
     what = result.thread.verdict if result.thread else f"{len(result.comments)} comments"
@@ -123,9 +151,19 @@ def _cmd_scorecard(args: argparse.Namespace) -> int:
                    else f"inv={roles.get('investigator')} fin={roles.get('finder')} "
                         f"verA={roles.get('verifier_a')}")
     out = Path(args.out or (_home() / "scorecards" / time.strftime("%Y-%m-%dT%H-%M")))
-    lines = run_scorecard(select(args.scenarios), args.runs, out, _build_dir(args),
-                          lambda job, ws, run_dir: _run_job(job, ws, run_dir / "trace",
-                                                            limiter), models_line)
+    built = _build_dir(args)
+
+    def runner(job, ws, run_dir):
+        sandbox = _sandbox(ws, args.sandbox, (str(built / "index"),))
+        return _run_job(job, ws, run_dir / "trace", limiter, sandbox)
+
+    from habodek.brain.sandbox import local_available
+
+    wanted = args.sandbox or os.environ.get("HABODEK_SANDBOX", "")
+    sandbox_note = ("local" if wanted == "local" or (wanted == "auto" and local_available())
+                    else "none")
+    lines = run_scorecard(select(args.scenarios), args.runs, out, built, runner,
+                          f"{models_line} sandbox={sandbox_note}")
     print("\n".join(lines))
     return 0
 
@@ -191,12 +229,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--work")
     p.add_argument("--out")
     p.add_argument("--trace")
+    p.add_argument("--sandbox", choices=["auto", "local", "none"], default="auto",
+                   help="where agents' `run` tool executes (auto: local if unshare works)")
     p.set_defaults(func=_cmd_local_job)
     p = sub.add_parser("scorecard", help="run scenarios N times and print <= 20 lines")
     p.add_argument("--scenarios", default="1-4")
     p.add_argument("--runs", type=int, default=3)
     p.add_argument("--build")
     p.add_argument("--out")
+    p.add_argument("--sandbox", choices=["auto", "local", "none"], default="auto",
+                   help="where agents' `run` tool executes (auto: local if unshare works)")
     p.set_defaults(func=_cmd_scorecard)
     for name in ("replay", "probe"):
         p = sub.add_parser(name)

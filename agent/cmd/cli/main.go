@@ -17,12 +17,14 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/semaphore"
 
+	"habodek/internal/app"
 	"habodek/internal/config"
 	"habodek/internal/core/brain"
 	"habodek/internal/pkg/git"
 	"habodek/internal/pkg/gitlab"
 	"habodek/internal/pkg/llmproxy"
 	"habodek/internal/pkg/logger"
+	"habodek/internal/pkg/sandbox"
 )
 
 func main() {
@@ -67,6 +69,13 @@ func reviewCmd() *cobra.Command {
 			}
 			mux := http.NewServeMux()
 			mux.Handle(llmproxy.Path, proxy)
+			sb, err := app.NewSandbox(cfg)
+			if err != nil {
+				return err
+			}
+			if sb != nil {
+				mux.Handle(sandbox.Path, sb)
+			}
 			go func() { _ = http.Serve(listener, mux) }()
 			defer listener.Close()
 
@@ -82,7 +91,11 @@ func reviewCmd() *cobra.Command {
 				WorkDir: cfg.Brain.WorkDir, TraceDir: cfg.Brain.TraceDir,
 				ProxyURL:         "http://" + listener.Addr().String() + "/internal/llm/v1",
 				Timeout:          time.Duration(cfg.Brain.TimeoutMinutes) * time.Minute,
-				InternalPackages: cfg.Brain.InternalPackages, PipIndexURL: cfg.Brain.PipIndexURL}, proxy)
+				InternalPackages: cfg.Brain.InternalPackages, PipIndexURL: cfg.Brain.PipIndexURL,
+				SandboxURL: "http://" + listener.Addr().String() + "/internal/sandbox/v1"}, proxy)
+			if sb != nil {
+				runner.WithSandbox(sb)
+			}
 			fmt.Printf("Reviewing %s!%d at %s (trace: %s)\n", project.PathWithNS, mrIID,
 				shortSHA(mr.HeadSHA), runner.TraceDir(jobID))
 			result, err := runner.Run(ctx, brain.Job{Kind: "review", JobID: jobID, Priority: "review",

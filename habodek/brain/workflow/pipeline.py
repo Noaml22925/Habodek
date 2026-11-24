@@ -40,6 +40,13 @@ from habodek.brain.contract import (
 from habodek.brain.llm.client import LLMClient
 from habodek.brain.runtime.loop import AgentTask, LoopEngine, RunResult
 from habodek.brain.runtime.tool import Tool, ToolContext, code_tools
+from habodek.brain.sandbox.core import RunLog
+from habodek.brain.sandbox.tool import (
+    WITNESSES_SCHEMA,
+    check_witnesses,
+    run_tool,
+    witnesses_from,
+)
 from habodek.brain.trace.writer import TraceWriter, new_run_id
 from habodek.brain.workflow import budget as caps
 from habodek.brain.workflow import evidence
@@ -48,6 +55,8 @@ from habodek.brain.workflow.comment import to_comment
 from habodek.brain.workflow.prompts import LENSES, Lens, render
 
 SEVERITIES = ["critical", "major", "minor"]
+# Roles given the sandbox's `run` tool when one is configured (finders read only).
+RUN_ROLES = ("investigator", "verifier_a", "verifier_b")
 SKIP_GLOBS = ("vendor/", "third_party/", "node_modules/", ".min.js", "_pb2.py", "generated/")
 
 
@@ -112,13 +121,15 @@ CONCLUDE_SCHEMA = {"type": "object", "properties": {
     "scenario": {"type": "string"},
     "fix": {"type": "string"},
     "changed_line": _LINE_REF,
-    "chain": {"type": "array", "items": _LINK}},
+    "chain": {"type": "array", "items": _LINK},
+    "witnesses": WITNESSES_SCHEMA},
     "required": ["verdict", "reason"]}
 
 VERDICT_SCHEMA = {"type": "object", "properties": {
     "outcome": {"type": "string", "enum": ["upheld", "refuted", "uncertain"]},
     "reason": {"type": "string", "minLength": 10},
-    "evidence": {"type": "array", "items": _LINK}},
+    "evidence": {"type": "array", "items": _LINK},
+    "witnesses": WITNESSES_SCHEMA},
     "required": ["outcome", "reason"]}
 
 DECIDE_SCHEMA = {"type": "object", "properties": {
@@ -160,8 +171,10 @@ class Hypothesis:
 
 class Review:
     def __init__(self, job: ReviewJob, ws: Workspace, client: LLMClient, trace: TraceWriter,
-                 config: ReviewConfig | None = None, index: SymbolIndex | None = None) -> None:
+                 config: ReviewConfig | None = None, index: SymbolIndex | None = None,
+                 runs: RunLog | None = None) -> None:
         self.job, self.ws, self.client, self.trace = job, ws, client, trace
+        self.runs = runs
         self.config = config or ReviewConfig()
         if job.request_budget:
             self.config.review_cap = job.request_budget
@@ -193,17 +206,20 @@ class Review:
     def _stage(self, name: str) -> RequestBudget:
         return self.budget.child(name, self.config.stage_caps.get(name, 20))
 
-    def _ctx(self) -> ToolContext:
-        return ToolContext(ws=self.ws, index=self.index)
+    def _ctx(self, label: str = "") -> ToolContext:
+        return ToolContext(ws=self.ws, index=self.index, extra={"agent": label})
 
     def _agent(self, role: str, label: str, system: str, task: str, terminal: Tool,
                stage_budget: RequestBudget, cap_key: str | None = None) -> RunResult:
         cap = self.config.agent_caps.get(cap_key or role, 10)
+        tools = code_tools(include_git=self.ws.repo is not None)
+        if self.runs is not None and role in RUN_ROLES:
+            tools.append(run_tool(self.runs))
         agent = AgentTask(role=role, label=label, system=system, task=task,
-                          tools=[*code_tools(include_git=self.ws.repo is not None), terminal],
+                          tools=[*tools, terminal],
                           model=self._model(role), max_turns=cap + 4, max_requests=cap,
                           priority=self.config.priority)
-        return self.engine.run(agent, self._ctx(), stage_budget)
+        return self.engine.run(agent, self._ctx(label), stage_budget)
 
     def _record_stage(self, name: str, stage: RequestBudget, agents: int, started: float,
                       notes: str = "") -> None:
@@ -362,6 +378,9 @@ class Review:
     # ------------------------------------------------------------------ investigate
     def _conclude_tool(self) -> Tool:
         def check(args: dict[str, Any], ctx: ToolContext) -> str | None:
+            bad_runs = check_witnesses(self.runs, args.get("witnesses"))
+            if bad_runs:
+                return bad_runs
             if args.get("verdict") != "confirmed":
                 return None
             missing = [k for k in ("title", "claim", "scenario", "changed_line", "chain")
@@ -394,7 +413,8 @@ class Review:
         tool = self._conclude_tool()
         task = f"# The hypothesis\n\n{h.render()}\n\n# Evidence\n\n{self.pack}"
         return h, self._agent("investigator", f"investigate/{h.id}",
-                              render("investigator", terminal=tool.name), task, tool, stage)
+                              render("investigator", terminal=tool.name,
+                                     sandbox=self.runs is not None), task, tool, stage)
 
     def investigate(self, hypotheses: list[Hypothesis], stage: RequestBudget) -> list[Finding]:
         cap = self.config.agent_caps["investigator"]
@@ -434,6 +454,7 @@ class Review:
                                     quote=str(link.get("quote", "")),
                                     claim=str(link.get("claim", "")))
                        for link in out.get("chain") or []],
+                witnesses=witnesses_from(self.runs, out.get("witnesses")),
                 head_sha=self.job.revisions.head_sha)
             confirmed.append(finding)
         return confirmed
@@ -492,6 +513,8 @@ class Review:
                 if not any((x.repo, x.path, x.line) == (link.repo, link.path, link.line)
                            for x in keep.chain):
                     keep.chain.append(link)
+            keep.witnesses += [w for w in f.witnesses
+                               if all(w.id != x.id for x in keep.witnesses)]
             self._drop(f, "check:merge", f"same root cause as {keep.id}")
         return list(by_anchor.values())
 
@@ -503,8 +526,13 @@ class Review:
     # ------------------------------------------------------------------ verify
     def _verify_tool(self) -> Tool:
         def check(args: dict[str, Any], ctx: ToolContext) -> str | None:
-            if args.get("outcome") == "refuted" and not args.get("evidence"):
-                return "a refutation must cite the code that refutes it (evidence)."
+            bad_runs = check_witnesses(self.runs, args.get("witnesses"))
+            if bad_runs:
+                return bad_runs
+            if args.get("outcome") == "refuted" and not (args.get("evidence")
+                                                         or args.get("witnesses")):
+                return ("a refutation must cite the code that refutes it (evidence) or a run "
+                        "that shows it (witnesses).")
             return None
 
         return Tool("verdict", "Record whether the finding survives.", VERDICT_SCHEMA,
@@ -514,6 +542,10 @@ class Review:
         chain = "\n".join(f"{i}. {(link.repo + ':') if link.repo else ''}{link.path}:"
                           f"{link.line} `{link.quote}` — {link.claim}"
                           for i, link in enumerate(f.chain, 1))
+        runs = "".join(f"\n- {w.id} ({w.root}) `{w.cmd}` exited {w.exit_code}: {w.shows}\n"
+                       f"```\n{w.output_tail[-800:]}\n```" for w in f.witnesses)
+        if runs:
+            chain += "\n\nSandbox runs cited by the investigator (re-run them to check):" + runs
         return (f"Finding {f.id} ({f.severity}): {f.title}\n\nClaim: {f.claim}\n\n"
                 f"Failing scenario: {f.scenario}\n\nAnchored at the changed line "
                 f"{f.anchor.path}:{f.anchor.line} `{f.anchor.snippet}`\n\nEvidence chain:\n"
@@ -522,8 +554,9 @@ class Review:
     def _verify_one(self, f: Finding, role: str, stage: RequestBudget) -> Verification:
         tool = self._verify_tool()
         task = f"# The finding to check\n\n{self._render_finding(f)}\n\n# Evidence\n\n{self.pack}"
-        run = self._agent(role, f"{role}/{f.id}", render("verifier", terminal=tool.name), task,
-                          tool, stage)
+        run = self._agent(role, f"{role}/{f.id}",
+                          render("verifier", terminal=tool.name, sandbox=self.runs is not None),
+                          task, tool, stage)
         if not run.ok:
             return Verification(verifier=role, model=run.model, outcome="error",
                                 reason=f"{run.status}: {run.error}"[:500])
@@ -534,7 +567,8 @@ class Review:
             if checked.ok and checked.link is not None:
                 links.append(checked.link)
         return Verification(verifier=role, model=run.model, outcome=out.get("outcome"),
-                            reason=str(out.get("reason", ""))[:1000], evidence=links)
+                            reason=str(out.get("reason", ""))[:1000], evidence=links,
+                            witnesses=witnesses_from(self.runs, out.get("witnesses")))
 
     def verify(self, findings: list[Finding]) -> list[Finding]:
         upheld: list[Finding] = []
@@ -725,8 +759,8 @@ def bumps_from_job(job: ReviewJob) -> list[pydeps.DependencySource]:
 
 
 def run_review(job: ReviewJob, ws: Workspace, client: LLMClient, trace: TraceWriter,
-               config: ReviewConfig | None = None) -> Result:
-    review = Review(job, ws, client, trace, config)
+               config: ReviewConfig | None = None, runs: RunLog | None = None) -> Result:
+    review = Review(job, ws, client, trace, config, runs=runs)
     try:
         return review.run()
     except Exception as exc:  # noqa: BLE001 - the control plane needs a result.json

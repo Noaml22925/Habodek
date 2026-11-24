@@ -50,6 +50,7 @@ class ScriptedModel:
         step = sum(1 for m in messages if m["role"] == "assistant")
         tools = {t["function"]["name"] for t in body.get("tools") or []}
         self.calls.append(role)
+        self.tools = tools
         sid = self._scenario(task)
         if tools == {"record_progress"}:
             return fg.call("record_progress", established=[], hypotheses=[], open_questions=[],
@@ -129,6 +130,23 @@ class ScriptedModel:
                             reasoning="find every site")
         if sid == "1":
             return self._conclude_s1(step)
+        witnesses = []
+        if sid == "2" and "run" in self.tools:
+            ran = _tool_text(messages)
+            if "run1 (" not in ran:
+                return fg.calls(("run", {"root": "head",
+                                         "cmd": "python -m pytest -q tests/test_checkout.py"}),
+                                ("run", {"root": "base",
+                                         "cmd": "python -m pytest -q tests/test_checkout.py"}),
+                                reasoning="the repo has a test for declined payments: run it")
+            head = re.search(r"(run\d+) \(head\): exit (\d+)", ran)
+            base = re.search(r"(run\d+) \(base\): exit (\d+)", ran)
+            if self.mode == "fake_run":
+                witnesses = [{"run": "run99", "shows": "invented"}]
+            elif head and base and head.group(2) != "0" and base.group(2) == "0":
+                witnesses = [{"run": head.group(1), "shows": "test_declined_cancels fails "
+                              "with payments-lib 1.5.0: the order ends up paid"},
+                             {"run": base.group(1), "shows": "the same test passes with 1.4.2"}]
         if sid == "2":
             ref = "mr/s2-payments-1.5.0"
             chain = [
@@ -150,7 +168,8 @@ class ScriptedModel:
                            scenario="A declined card: the order is marked paid and shipped.",
                            fix="Check result.succeeded.",
                            changed_line={"path": "requirements.txt",
-                                         "code": "payments-lib==1.5.0"}, chain=chain)
+                                         "code": "payments-lib==1.5.0"}, chain=chain,
+                           **({"witnesses": witnesses} if witnesses else {}))
         if sid == "3":
             return fg.call("conclude", verdict="refuted", reason="orders/schema.py:22 _int "
                            "rejects anything not an int before every call site")

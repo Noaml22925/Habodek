@@ -14,14 +14,15 @@ import (
 )
 
 type Config struct {
-	Server ServerConfig
-	Store  StoreConfig
-	GitLab GitLabConfig
-	Git    GitConfig
-	Worker WorkerConfig
-	Review ReviewConfig
-	Log    LogConfig
-	Brain  BrainConfig
+	Server  ServerConfig
+	Store   StoreConfig
+	GitLab  GitLabConfig
+	Git     GitConfig
+	Worker  WorkerConfig
+	Review  ReviewConfig
+	Log     LogConfig
+	Brain   BrainConfig
+	Sandbox SandboxConfig
 }
 
 type ServerConfig struct {
@@ -77,6 +78,22 @@ type BrainConfig struct {
 	ReplyDebounceSec int
 }
 
+// SandboxConfig: where the brain's `run` tool executes repository code (M9).
+// Backend "docker" in production, "local" (unshare) on a dev box, "none" = no run tool.
+type SandboxConfig struct {
+	Backend     string
+	URL         string // how the brain reaches this server's sandbox endpoint
+	CacheDir    string // cached venvs, keyed by dependency files + recipe
+	WorkDir     string // throwaway copies
+	Image       string // runner image (python 3.12 + pytest)
+	PrepNetwork string // docker network env-prep uses to reach Artifactory
+	FindLinks   []string
+	MemoryMB    int
+	CPUs        float64
+	MaxParallel int
+	PrepMinutes int
+}
+
 func Load() (*Config, error) {
 	cfg := &Config{}
 	cfg.Server.Port = envOrDefault("SERVER_PORT", "8080")
@@ -126,6 +143,28 @@ func Load() (*Config, error) {
 	cfg.Brain.PipIndexURL = os.Getenv("HABODEK_PIP_INDEX_URL")
 	cfg.Brain.MaxComments = envIntOrDefault("HABODEK_MAX_COMMENTS", 6)
 	cfg.Brain.ReplyDebounceSec = envIntOrDefault("HABODEK_REPLY_DEBOUNCE_SEC", 60)
+
+	cfg.Sandbox.Backend = strings.ToLower(envOrDefault("HABODEK_SANDBOX", "none"))
+	switch cfg.Sandbox.Backend {
+	case "none", "local", "docker":
+	default:
+		return nil, fmt.Errorf("unsupported HABODEK_SANDBOX: %s (must be none, local or docker)", cfg.Sandbox.Backend)
+	}
+	cfg.Sandbox.URL = envOrDefault("HABODEK_SANDBOX_URL",
+		"http://127.0.0.1:"+cfg.Server.Port+"/internal/sandbox/v1")
+	cfg.Sandbox.CacheDir = envOrDefault("HABODEK_SANDBOX_CACHE", "data/sandbox")
+	cfg.Sandbox.WorkDir = envOrDefault("HABODEK_SANDBOX_WORK", "data/sandbox-runs")
+	cfg.Sandbox.Image = envOrDefault("HABODEK_SANDBOX_IMAGE", "habodek-runner:latest")
+	cfg.Sandbox.PrepNetwork = envOrDefault("HABODEK_SANDBOX_PREP_NETWORK", "bridge")
+	for _, p := range strings.Split(os.Getenv("HABODEK_SANDBOX_FIND_LINKS"), ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			cfg.Sandbox.FindLinks = append(cfg.Sandbox.FindLinks, p)
+		}
+	}
+	cfg.Sandbox.MemoryMB = envIntOrDefault("HABODEK_SANDBOX_MEMORY_MB", 4096)
+	cfg.Sandbox.CPUs = envFloatOrDefault("HABODEK_SANDBOX_CPUS", 2)
+	cfg.Sandbox.MaxParallel = envIntOrDefault("HABODEK_SANDBOX_PARALLEL", 2)
+	cfg.Sandbox.PrepMinutes = envIntOrDefault("HABODEK_SANDBOX_PREP_MIN", 20)
 
 	cfg.Log.Level = strings.ToLower(envOrDefault("LOG_LEVEL", "info"))
 	cfg.Log.Format = strings.ToLower(envOrDefault("LOG_FORMAT", "json"))

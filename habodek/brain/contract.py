@@ -81,12 +81,26 @@ class Anchor(_Model):
     snippet: str = ""  # the quoted changed code the anchor was resolved from
 
 
+class RunWitness(_Model):
+    """A sandbox run cited as evidence: the facts come from the run log, not the model."""
+
+    id: str  # run id in the job's run log (trace: runs/<id>.txt)
+    root: str  # head, base, repo:<name>
+    cmd: str
+    files: list[str] = Field(default_factory=list)  # files the run added to its copy
+    exit_code: int
+    timed_out: bool = False
+    output_tail: str = ""
+    shows: str = ""  # what the citing agent says it demonstrates
+
+
 class Verification(_Model):
     verifier: str  # role, e.g. "verifier_a"
     model: str
     outcome: Literal["upheld", "refuted", "uncertain", "error"]
     reason: str = ""
     evidence: list[EvidenceLink] = Field(default_factory=list)
+    witnesses: list[RunWitness] = Field(default_factory=list)
 
 
 class Finding(_Model):
@@ -100,6 +114,7 @@ class Finding(_Model):
     anchor: Anchor
     chain: list[EvidenceLink] = Field(default_factory=list)
     head_sha: str = ""  # the revision the finding was made at
+    witnesses: list[RunWitness] = Field(default_factory=list)  # sandbox runs (M9)
     verifications: list[Verification] = Field(default_factory=list)
     status: Literal["posted", "dropped", "not_investigated"] = "posted"
     dropped_at: str | None = None  # stage that dropped it
@@ -172,6 +187,7 @@ class ThreadVerdict(_Model):
     body: str  # the reply to post
     remaining: list[EvidenceLink] = Field(default_factory=list)  # for fix_incomplete / stands
     convinced_by: list[EvidenceLink] = Field(default_factory=list)  # for withdrawn
+    witnesses: list[RunWitness] = Field(default_factory=list)  # sandbox runs cited
     lesson_candidate: str | None = None
 
 

@@ -36,14 +36,15 @@ def validator(model, body):
     ct.render(PROFILES.get(model).name, body)
 
 
-def review(built, sid, tmp_path, mode="good", config=None):
+def review(built, sid, tmp_path, mode="good", config=None, runs_for=None):
     model = ScriptedModel(built, mode)
     gateway = fg.FakeGateway(model, validator=validator)
     trace = TraceWriter(tmp_path / f"trace-{sid}-{mode}")
     client = LLMClient("http://g.invalid/v1", "k", profiles=PROFILES, trace=trace,
                        transport=gateway.transport(), sleep=lambda s: None)
     job, ws = prepare(built, sid, tmp_path / "work", f"{mode}")
-    result = run_review(job, ws, client, trace, config or ReviewConfig(parallel=3))
+    runs = runs_for(ws, trace) if runs_for else None
+    result = run_review(job, ws, client, trace, config or ReviewConfig(parallel=3), runs=runs)
     return result, model, trace, gateway
 
 

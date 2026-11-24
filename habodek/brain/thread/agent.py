@@ -18,7 +18,7 @@ Budget: 30 requests (handoff §3.1), split across the rounds.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from habodek.brain.codeintel.files import read_text
@@ -28,11 +28,18 @@ from habodek.brain.contract import EvidenceLink, Result, StageStat, ThreadJob, T
 from habodek.brain.llm.client import LLMClient
 from habodek.brain.runtime.loop import AgentTask, LoopEngine, RunResult
 from habodek.brain.runtime.tool import Tool, ToolContext, code_tools
+from habodek.brain.sandbox.core import RunLog
+from habodek.brain.sandbox.tool import (
+    WITNESSES_SCHEMA,
+    check_witnesses,
+    run_tool,
+    witnesses_from,
+)
 from habodek.brain.thread.linemap import LineMapper
 from habodek.brain.trace.writer import TraceWriter, new_run_id
 from habodek.brain.workflow import evidence
 from habodek.brain.workflow.budget import THREAD_CAP, RequestBudget
-from habodek.brain.workflow.comment import where
+from habodek.brain.workflow.comment import render_witnesses, where
 from habodek.brain.workflow.prompts import render
 
 VERDICTS = ["fixed", "fix_incomplete", "stands", "withdrawn", "need_info"]
@@ -55,13 +62,15 @@ THREAD_SCHEMA = {"type": "object", "properties": {
     "convinced_by": {"type": "array", "items": _LINK,
                      "description": "For withdrawn: the code that convinced you."},
     "lesson": {"type": "string",
-               "description": "For withdrawn: what a future review should know."}},
+               "description": "For withdrawn: what a future review should know."},
+    "witnesses": WITNESSES_SCHEMA},
     "required": ["claim_type", "verdict", "reason", "reply"]}
 
 CHALLENGE_SCHEMA = {"type": "object", "properties": {
     "outcome": {"type": "string", "enum": ["agree", "disagree"]},
     "reason": {"type": "string", "minLength": 10},
-    "evidence": {"type": "array", "items": _LINK}},
+    "evidence": {"type": "array", "items": _LINK},
+    "witnesses": WITNESSES_SCHEMA},
     "required": ["outcome", "reason"]}
 
 # Requests per round, within the thread cap of 30.
@@ -77,12 +86,14 @@ class Conclusion:
     convinced_by: list[EvidenceLink]
     lesson: str
     claim_type: str
+    witnesses: list = field(default_factory=list)
 
 
 class ThreadReview:
     def __init__(self, job: ThreadJob, ws: Workspace, client: LLMClient, trace: TraceWriter,
-                 index: SymbolIndex | None = None) -> None:
+                 index: SymbolIndex | None = None, runs: RunLog | None = None) -> None:
         self.job, self.ws, self.client, self.trace = job, ws, client, trace
+        self.runs = runs
         self.index = index or SymbolIndex(ws)
         self.engine = LoopEngine(client, trace)
         self.budget = RequestBudget(job.request_budget or THREAD_CAP, "thread")
@@ -163,6 +174,9 @@ class ThreadReview:
 
     def _thread_tool(self) -> Tool:
         def check(args: dict[str, Any], ctx: ToolContext) -> str | None:
+            bad_runs = check_witnesses(self.runs, args.get("witnesses"))
+            if bad_runs:
+                return bad_runs
             verdict = args.get("verdict")
             for key in ("remaining", "convinced_by"):
                 bad = [evidence.check_quote(self.ws, link).reason for link in args.get(key) or []
@@ -180,13 +194,17 @@ class ThreadReview:
 
     def _agent(self, role: str, label: str, system: str, task: str, terminal: Tool,
                cap: int) -> RunResult:
+        tools = code_tools(include_git=self.ws.repo is not None)
+        if self.runs is not None:
+            tools.append(run_tool(self.runs))
         agent = AgentTask(role=role, label=label, system=system, task=task,
-                          tools=[*code_tools(include_git=self.ws.repo is not None), terminal],
+                          tools=[*tools, terminal],
                           model=self._model(role), max_turns=cap + 4, max_requests=cap,
                           priority="reply" if self.job.event == "reply" else "recheck")
         started = time.monotonic()
         stage = self.budget.child(label, cap)
-        run = self.engine.run(agent, ToolContext(ws=self.ws, index=self.index), stage)
+        run = self.engine.run(agent, ToolContext(ws=self.ws, index=self.index,
+                                                 extra={"agent": label}), stage)
         self.stats.append(StageStat(stage=label, requests=stage.used, agents=1,
                                     seconds=round(time.monotonic() - started, 1),
                                     notes=run.status))
@@ -194,7 +212,8 @@ class ThreadReview:
 
     def _investigate(self, label: str, cap: int, extra: str = "") -> Conclusion | None:
         tool = self._thread_tool()
-        run = self._agent("thread", label, render("thread", terminal=tool.name),
+        run = self._agent("thread", label,
+                          render("thread", terminal=tool.name, sandbox=self.runs is not None),
                           self.task(extra), tool, cap)
         if not run.ok:
             self.trace.event("thread_round_failed", label=label, status=run.status,
@@ -204,19 +223,24 @@ class ThreadReview:
         return Conclusion(out["verdict"], str(out.get("reason", "")), str(out.get("reply", "")),
                           self._verified(out.get("remaining")),
                           self._verified(out.get("convinced_by")),
-                          str(out.get("lesson", "") or ""), str(out.get("claim_type", "")))
+                          str(out.get("lesson", "") or ""), str(out.get("claim_type", "")),
+                          witnesses_from(self.runs, out.get("witnesses")))
 
     def _challenge(self, conclusion: Conclusion, label: str, cap: int) -> tuple[str, str]:
         tool = Tool("challenge", "Agree or disagree with the conclusion.", CHALLENGE_SCHEMA,
-                    terminal=True)
+                    terminal=True,
+                    check=lambda args, ctx: check_witnesses(self.runs, args.get("witnesses")))
         cited = "\n".join(f"- {(link.repo + ':') if link.repo else ''}{link.path}:{link.line} "
                           f"`{link.quote}` — {link.claim}"
                           for link in conclusion.remaining + conclusion.convinced_by)
         extra = (f"# The conclusion to check\n\nVerdict: **{conclusion.verdict}**\n\n"
                  f"Reasoning: {conclusion.reason}\n\nCited:\n{cited or '- (nothing)'}\n\n"
+                 + "".join(f"Sandbox run {w.id} ({w.root}) `{w.cmd}` exited {w.exit_code}: "
+                           f"{w.shows}\n\n" for w in conclusion.witnesses) +
                  f"Reply it would post:\n> {conclusion.reply}")
         run = self._agent("thread_challenger", label,
-                          render("thread_challenger", terminal=tool.name),
+                          render("thread_challenger", terminal=tool.name,
+                                 sandbox=self.runs is not None),
                           self.task(extra), tool, cap)
         if not run.ok:
             return "error", f"{run.status}: {run.error}"
@@ -264,12 +288,15 @@ class ThreadReview:
             if missing:
                 body += "\n\nStill affected:\n" + "\n".join(
                     f"- {where(link)} — `{link.quote[:100]}`" for link in missing)
+        if c.witnesses:
+            body += "\n\n" + "\n".join(render_witnesses(c.witnesses, "Checked in the sandbox"))
         lesson = None
         if c.verdict == "withdrawn":
             lesson = c.lesson.strip() or f"Finding withdrawn after the developer's reply: " \
                                          f"{c.reason[:200]}"
         return ThreadVerdict(verdict=c.verdict, body=body, remaining=c.remaining,
-                             convinced_by=c.convinced_by, lesson_candidate=lesson)
+                             convinced_by=c.convinced_by, lesson_candidate=lesson,
+                             witnesses=c.witnesses)
 
     def _result(self, status: str, verdict: ThreadVerdict | None, summary: str) -> Result:
         result = Result(job_id=self.job.job_id, run_id=self.run_id, kind="thread",
@@ -281,8 +308,9 @@ class ThreadReview:
         return result
 
 
-def run_thread(job: ThreadJob, ws: Workspace, client: LLMClient, trace: TraceWriter) -> Result:
-    review = ThreadReview(job, ws, client, trace)
+def run_thread(job: ThreadJob, ws: Workspace, client: LLMClient, trace: TraceWriter,
+               runs: RunLog | None = None) -> Result:
+    review = ThreadReview(job, ws, client, trace, runs=runs)
     try:
         return review.run()
     except Exception as exc:  # noqa: BLE001 - the control plane needs a result.json

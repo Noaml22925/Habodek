@@ -14,3 +14,7 @@ the code, before it is posted:
 
 Answer `agree` if the conclusion survives your check, `disagree` with your argument and
 the code that supports it.
+{% if sandbox|default(false) %}
+
+{% include "_sandbox.md" %}
+{% endif %}

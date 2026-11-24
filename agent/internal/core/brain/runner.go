@@ -12,11 +12,19 @@ import (
 	"time"
 
 	"habodek/internal/pkg/llmproxy"
+	"habodek/internal/pkg/sandbox"
 )
 
 // Tokens is the part of the LLM proxy the runner needs.
 type Tokens interface {
 	Register(job llmproxy.Job) string
+	Unregister(token string)
+}
+
+// Sandboxes is the part of the sandbox service the runner needs: the job's token may
+// run the job's roots for as long as the job runs.
+type Sandboxes interface {
+	Register(token string, job sandbox.Job)
 	Unregister(token string)
 }
 
@@ -30,13 +38,15 @@ type RunnerConfig struct {
 	Timeout          time.Duration
 	InternalPackages string
 	PipIndexURL      string
+	SandboxURL       string   // how the brain reaches the sandbox service ("" = no sandbox)
 	ExtraEnv         []string // KEY=VALUE, for tests
 }
 
 // Runner runs one brain subprocess per job.
 type Runner struct {
-	cfg    RunnerConfig
-	tokens Tokens
+	cfg       RunnerConfig
+	tokens    Tokens
+	sandboxes Sandboxes
 }
 
 func NewRunner(cfg RunnerConfig, tokens Tokens) *Runner {
@@ -44,6 +54,26 @@ func NewRunner(cfg RunnerConfig, tokens Tokens) *Runner {
 		cfg.Timeout = 90 * time.Minute
 	}
 	return &Runner{cfg: cfg, tokens: tokens}
+}
+
+// WithSandbox gives the brain the `run` tool: its job token may run commands in the
+// job's head, base and other repositories through the sandbox service.
+func (r *Runner) WithSandbox(s Sandboxes) *Runner {
+	r.sandboxes = s
+	return r
+}
+
+// SandboxRoots are the roots of a job the brain may run: never dependency sources or
+// site-packages, which are read-only references.
+func SandboxRoots(ws Workspace) map[string]string {
+	roots := map[string]string{"head": ws.Head}
+	if ws.Base != "" {
+		roots["base"] = ws.Base
+	}
+	for name, dir := range ws.OtherRepos {
+		roots["repo:"+name] = dir
+	}
+	return roots
 }
 
 // TraceDir is where a job's trace lives (kept after the job; the trace viewer reads it).
@@ -81,6 +111,12 @@ func (r *Runner) Run(ctx context.Context, job Job) (*Result, error) {
 	token := r.tokens.Register(llmproxy.Job{ID: job.JobID,
 		Priority: llmproxy.PriorityFromName(job.Priority), TraceDir: traceDir})
 	defer r.tokens.Unregister(token)
+	sandboxOn := r.sandboxes != nil && r.cfg.SandboxURL != ""
+	if sandboxOn {
+		r.sandboxes.Register(token, sandbox.Job{ID: job.JobID, Roots: SandboxRoots(job.Workspace),
+			TraceDir: traceDir})
+		defer r.sandboxes.Unregister(token)
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, r.cfg.Timeout)
 	defer cancel()
@@ -89,6 +125,9 @@ func (r *Runner) Run(ctx context.Context, job Job) (*Result, error) {
 	cmd := exec.CommandContext(ctx, r.cfg.Command, args...)
 	cmd.Dir = jobDir
 	cmd.Env = r.env(token)
+	if sandboxOn {
+		cmd.Env = append(cmd.Env, "HABODEK_SANDBOX_URL="+r.cfg.SandboxURL)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	runErr := cmd.Run()

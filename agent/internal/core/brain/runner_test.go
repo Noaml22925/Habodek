@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"habodek/internal/pkg/llmproxy"
+	"habodek/internal/pkg/sandbox"
 )
 
 // fakeBrain stands in for habodek-brain: it checks its environment, makes one LLM
@@ -175,5 +177,44 @@ func TestParsesARealBrainResult(t *testing.T) {
 	}
 	if !strings.Contains(result.Comments[0].Body, result.Comments[0].Marker) {
 		t.Fatal("comment body lacks its marker")
+	}
+}
+
+type recordingSandbox struct {
+	registered map[string]sandbox.Job
+	revoked    []string
+}
+
+func (r *recordingSandbox) Register(token string, job sandbox.Job) {
+	if r.registered == nil {
+		r.registered = map[string]sandbox.Job{}
+	}
+	r.registered[token] = job
+}
+func (r *recordingSandbox) Unregister(token string) { r.revoked = append(r.revoked, token) }
+
+// The brain gets the sandbox URL, and its job token may run exactly the job's head,
+// base and other repositories — never dependency sources — until the job ends.
+func TestRunnerGivesTheJobItsSandboxRoots(t *testing.T) {
+	script := strings.Replace(fakeBrain, "reply = json.load",
+		`assert os.environ["HABODEK_SANDBOX_URL"] == "http://cp/internal/sandbox/v1"
+reply = json.load`, 1)
+	runner, _, _ := setup(t, script)
+	runner.cfg.SandboxURL = "http://cp/internal/sandbox/v1"
+	sb := &recordingSandbox{}
+	runner.WithSandbox(sb)
+	job := sampleJob()
+	job.Workspace.Dependencies = []DependencyTree{{Name: "payments-lib", Version: "1.5.0", Path: "/w/dep"}}
+	if _, err := runner.Run(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	if len(sb.registered) != 1 || len(sb.revoked) != 1 {
+		t.Fatalf("registered %v revoked %v", sb.registered, sb.revoked)
+	}
+	for token, got := range sb.registered {
+		want := map[string]string{"head": "/w/head", "base": "/w/base", "repo:orders-service": "/w/orders"}
+		if !reflect.DeepEqual(got.Roots, want) || got.ID != "job-42" || sb.revoked[0] != token {
+			t.Fatalf("job %+v", got)
+		}
 	}
 }

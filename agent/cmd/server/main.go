@@ -19,6 +19,7 @@ import (
 	"habodek/internal/config"
 	"habodek/internal/pkg/llmproxy"
 	"habodek/internal/pkg/logger"
+	"habodek/internal/pkg/sandbox"
 )
 
 func main() {
@@ -54,11 +55,16 @@ func main() {
 	})
 	// The brain's only route to the models: per-job tokens, per-model limits, raw traces.
 	r.Post(llmproxy.Path, a.Proxy.ServeHTTP)
+	// Repository code runs only here, in throwaway containers (M9); same per-job tokens.
+	if a.Sandbox != nil {
+		r.Post(sandbox.Path, a.Sandbox.ServeHTTP)
+	}
 
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
 	server := &http.Server{Addr: addr, Handler: r, ReadHeaderTimeout: 30 * time.Second}
 	slog.Info("habodek control plane listening", "addr", addr, "store", cfg.Store.Driver,
-		"workers", cfg.Worker.PoolSize, "gateway_rpm_per_model", cfg.Brain.GatewayRPM)
+		"workers", cfg.Worker.PoolSize, "gateway_rpm_per_model", cfg.Brain.GatewayRPM,
+		"sandbox", cfg.Sandbox.Backend)
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)

@@ -11,7 +11,8 @@ GitLab --webhook--> triggers --> durable queue --> worker --> worktrees --> habo
    |                                                  |                LLM proxy (per-model
    +-------- threads, replies <---- poster <---- result.json               limits, raw trace)
                                                                               |
-                                                                           LiteLLM
+                                                     sandbox (run tool) <-----+-----> LiteLLM
+                                                  docker run --network none
 ```
 
 ## What triggers what
@@ -44,6 +45,12 @@ decides.
 | `HABODEK_PIP_INDEX_URL` | | Artifactory index for that source |
 | `HABODEK_MAX_COMMENTS` | 6 | comments per review |
 | `GIT_REPOS_DIR` | `resource/repos` | project mirrors |
+| `HABODEK_SANDBOX` | `none` | where the brain's `run` tool executes code: `docker` (production), `local` (`unshare`, dev boxes), `none` (no run tool) |
+| `HABODEK_SANDBOX_IMAGE` | `habodek-runner:latest` | runner image (`docker/runner.Dockerfile`) |
+| `HABODEK_SANDBOX_PREP_NETWORK` | `bridge` | Docker network env-prep uses to reach Artifactory (`HABODEK_PIP_INDEX_URL`); runs always get `--network none` |
+| `HABODEK_SANDBOX_CACHE`, `HABODEK_SANDBOX_WORK` | `data/sandbox`, `data/sandbox-runs` | cached venvs (by dependency files + recipe), throwaway copies |
+| `HABODEK_SANDBOX_MEMORY_MB`, `HABODEK_SANDBOX_CPUS`, `HABODEK_SANDBOX_PARALLEL` | 4096, 2, 2 | limits per run; runs at once |
+| `HABODEK_SANDBOX_URL` | `http://127.0.0.1:$SERVER_PORT/internal/sandbox/v1` | how the brain reaches the sandbox endpoint |
 
 Per-model behaviour, roles and prompts are configured in the brain
 (`habodek/brain/llm/models.yaml`), not here.
@@ -64,6 +71,27 @@ go run ./cmd/cli clone-all                       # pre-warm the mirrors
 - `internal/core/brain` — the JSON contract with the brain, the subprocess runner,
   worktrees. `testdata/` holds golden files that the Python tests also check.
 - `internal/pkg/llmproxy` — `POST /internal/llm/v1/chat/completions`.
+- `internal/pkg/sandbox` — `POST /internal/sandbox/v1/run`: the job's token runs a
+  command in a throwaway copy of `head`, `base` or `repo:<name>` (never a path), after
+  env-prep builds that revision's venv (`envprep.py`, embedded; cached by the
+  dependency files and the recipe). Backends: `Docker` (sibling containers) and
+  `Local` (user + network namespace). Every run goes to the job's `sandbox.jsonl`.
+
+### The per-repository recipe
+
+A repository can say how it is tested in `.habodek.md`, read from the **target
+branch** (so an MR cannot change how it is itself tested):
+
+    ```habodek-sandbox
+    test: python -m pytest -q
+    install: -r requirements/ci.txt
+    tools: pytest-asyncio==0.23.8
+    ```
+
+`test` is the command suggested to the agents; `install` and `tools` add to what
+env-prep installs (requirement files, `[project].dependencies` and the
+test/dev groups are found without a recipe). Index options in requirement files and
+recipes are dropped: packages come from `HABODEK_PIP_INDEX_URL` only.
 - `internal/pkg/gitlab`, `internal/pkg/git` — GitLab REST and git transport.
 
 ## Tests
@@ -76,3 +104,5 @@ HABODEK_E2E=1 go test -run TestEndToEnd ./internal/orchestrator/   # with the re
 
 The end-to-end test runs label → in-progress note → a thread with its evidence chain
 → a reply → a verdict, against a fake GitLab, the real brain and a scripted gateway.
+Where unprivileged user namespaces work it also routes the brain's test runs through
+the sandbox endpoint, and checks the comment cites the run that fails at head.

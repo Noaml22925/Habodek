@@ -40,6 +40,12 @@ class TraceWriter:
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), "utf-8")
         return path
 
+    def write_text(self, name: str, text: str) -> Path:
+        path = self.dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, "utf-8")
+        return path
+
     def events(self) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
@@ -59,6 +65,9 @@ class NullTrace(TraceWriter):
         return {"kind": kind, **fields}
 
     def write_json(self, name: str, data: Any) -> Path:  # pragma: no cover
+        return Path("/dev/null")
+
+    def write_text(self, name: str, text: str) -> Path:  # pragma: no cover
         return Path("/dev/null")
 
     def events(self) -> list[dict[str, Any]]:

@@ -16,6 +16,7 @@ import (
 	"habodek/internal/pkg/git"
 	"habodek/internal/pkg/gitlab"
 	"habodek/internal/pkg/llmproxy"
+	"habodek/internal/pkg/sandbox"
 	"habodek/internal/testutil/fakegitlab"
 )
 
@@ -23,6 +24,11 @@ import (
 // when"): label -> in-progress note -> a thread with its evidence chain -> a reply ->
 // a verdict in the thread. GitLab is faked, the gateway serves the scripted model
 // (tests/e2e_gateway.py) and the repository is scenario S2's orders-service.
+//
+// Where unprivileged namespaces work, the brain also gets the sandbox (M9 "done
+// when"): the investigator runs the repository's tests through this control plane's
+// sandbox endpoint, they fail at head and pass at base, and the posted comment cites
+// the failing run.
 //
 // Needs python3 with the habodek package installed and habodek-brain on PATH; run
 // with HABODEK_E2E=1 (CI and the scorecard machine do).
@@ -71,13 +77,29 @@ func TestEndToEnd(t *testing.T) {
 	proxy := llmproxy.New(llmproxy.Config{UpstreamURL: gatewayURL, GatewayKey: "gw-key", RPM: 6000})
 	mux := http.NewServeMux()
 	mux.Handle(llmproxy.Path, proxy)
+	var sb *sandbox.Service
+	if sandbox.LocalAvailable() {
+		sb, err = sandbox.New(sandbox.Config{CacheDir: filepath.Join(work, "sandbox"),
+			WorkDir: filepath.Join(work, "sandbox-runs"), FindLinks: []string{filepath.Join(built, "index")}},
+			&sandbox.Local{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mux.Handle(sandbox.Path, sb)
+	} else {
+		t.Log("no user namespaces: running without the sandbox")
+	}
 	proxySrv := httptest.NewServer(mux)
 	t.Cleanup(proxySrv.Close)
 	traces := filepath.Join(work, "traces")
 	runner := brain.NewRunner(brain.RunnerConfig{Command: "habodek-brain", WorkDir: filepath.Join(work, "jobs"),
 		TraceDir: traces, ProxyURL: proxySrv.URL + "/internal/llm/v1", Timeout: 5 * time.Minute,
 		InternalPackages: "payments-lib,platform-common",
+		SandboxURL:       proxySrv.URL + "/internal/sandbox/v1",
 		ExtraEnv:         []string{"HABODEK_PIP_FIND_LINKS=" + filepath.Join(built, "index")}}, proxy)
+	if sb != nil {
+		runner.WithSandbox(sb)
+	}
 	gm := &localGit{Manager: git.NewManager(reposDir, gl.URL(), "")}
 	client := gitlab.NewClient(gl.URL(), "token")
 	worker := &Worker{Store: store, GitLab: client, Poster: &Poster{GitLab: client}, Brain: runner,
@@ -113,6 +135,24 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if inline == nil || inline.Position["new_path"] != "requirements.txt" || inline.Position["new_line"].(float64) != 2 {
 		t.Fatalf("anchor = %+v", inline)
+	}
+	if sb != nil {
+		for _, want := range []string{"Reproduced in the sandbox", "on this MR's head fails (exit 1)",
+			"on the target branch (before the change) passes", "test_declined_cancels"} {
+			if !strings.Contains(inline.Body, want) {
+				t.Fatalf("missing %q in the comment:\n%s", want, inline.Body)
+			}
+		}
+		runs, _ := filepath.Glob(filepath.Join(traces, "*", "sandbox.jsonl"))
+		var log string
+		for _, m := range runs {
+			data, _ := os.ReadFile(m)
+			log += string(data)
+		}
+		if !strings.Contains(log, `"root":"head"`) || !strings.Contains(log, `"exit_code":1`) ||
+			!strings.Contains(log, `"root":"base"`) || !strings.Contains(log, `"exit_code":0`) {
+			t.Fatalf("sandbox log:\n%s", log)
+		}
 	}
 
 	// 5. A reply -> the thread agent -> a verdict in the thread.

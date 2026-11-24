@@ -8,7 +8,14 @@ repository links to the blob at the head SHA when the MR's web URL is known.
 
 from __future__ import annotations
 
-from habodek.brain.contract import Comment, EvidenceLink, Finding, MergeRequest, finding_marker
+from habodek.brain.contract import (
+    Comment,
+    EvidenceLink,
+    Finding,
+    MergeRequest,
+    RunWitness,
+    finding_marker,
+)
 
 SEVERITY_MARK = {"critical": "🔴", "major": "🟠", "minor": "🟡"}
 
@@ -31,6 +38,35 @@ def where(link: EvidenceLink, mr: MergeRequest | None = None, head_sha: str = ""
     return f"`{label}`"
 
 
+def _revision(root: str) -> str:
+    return {"head": "this MR's head", "base": "the target branch (before the change)"}.get(
+        root, root.split(":", 1)[-1])
+
+
+FENCE = "`" * 3
+
+
+def render_witnesses(witnesses: list[RunWitness], heading: str = "Reproduced in the sandbox"
+                     ) -> list[str]:
+    """Runs cited as evidence: command, revision, exit status, and the output's tail
+    folded away. The facts come from the run log, not from the model."""
+    lines = [f"**{heading}:**"]
+    for w in witnesses:
+        status = "timed out" if w.timed_out else (
+            "passes" if w.exit_code == 0 else f"fails (exit {w.exit_code})")
+        added = f" with {', '.join(f'`{p}`' for p in w.files)} added" if w.files else ""
+        shows = f" — {w.shows.strip()}" if w.shows.strip() else ""
+        lines.append(f"- `{w.cmd.strip()[:160]}` on {_revision(w.root)}{added} {status}{shows}")
+    tails = [w for w in witnesses if w.output_tail.strip()]
+    if tails:
+        lines += ["", "<details><summary>Run output</summary>", ""]
+        for w in tails:
+            tail = "\n".join(w.output_tail.strip().splitlines()[-25:]).replace(FENCE, "` ` `")
+            lines += [f"`{w.id}` ({w.root}):", "", FENCE, tail, FENCE, ""]
+        lines.append("</details>")
+    return lines
+
+
 def render_body(finding: Finding, mr: MergeRequest | None, head_sha: str, run_id: str,
                 checked: str = "") -> str:
     mark = SEVERITY_MARK.get(finding.severity, "🟠")
@@ -40,6 +76,8 @@ def render_body(finding: Finding, mr: MergeRequest | None, head_sha: str, run_id
         lines.append(f"- {where(link, mr, head_sha)} — `{link.quote.strip()[:120]}` — {claim}")
     if finding.scenario.strip():
         lines += ["", f"**Scenario:** {finding.scenario.strip()}"]
+    if finding.witnesses:
+        lines += ["", *render_witnesses(finding.witnesses)]
     if finding.fix.strip():
         lines += ["", f"**Fix:** {finding.fix.strip()}"]
     upheld = sum(1 for v in finding.verifications if v.outcome == "upheld")

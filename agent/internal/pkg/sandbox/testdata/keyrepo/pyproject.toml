@@ -1,0 +1,8 @@
+[project]
+name = "keyrepo"
+version = "0.1.0"
+dependencies = ["payments-lib==1.4.2", "direct @ https://x.invalid/d.whl"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+docs = ["sphinx"]

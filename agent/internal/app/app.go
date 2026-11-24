@@ -3,6 +3,7 @@
 package app
 
 import (
+	"fmt"
 	"time"
 
 	"habodek/internal/config"
@@ -11,6 +12,7 @@ import (
 	"habodek/internal/pkg/git"
 	"habodek/internal/pkg/gitlab"
 	"habodek/internal/pkg/llmproxy"
+	"habodek/internal/pkg/sandbox"
 )
 
 type App struct {
@@ -19,6 +21,7 @@ type App struct {
 	GitLab   *gitlab.Client
 	Git      *git.Manager
 	Proxy    *llmproxy.Proxy
+	Sandbox  *sandbox.Service // nil when HABODEK_SANDBOX=none
 	Runner   *brain.Runner
 	Worker   *orchestrator.Worker
 	Triggers *orchestrator.Triggers
@@ -38,7 +41,16 @@ func Build(cfg *config.Config) (*App, error) {
 	runner := brain.NewRunner(brain.RunnerConfig{Command: cfg.Brain.Command,
 		WorkDir: cfg.Brain.WorkDir, TraceDir: cfg.Brain.TraceDir, ProxyURL: cfg.Brain.ProxyURL,
 		Timeout:          time.Duration(cfg.Brain.TimeoutMinutes) * time.Minute,
-		InternalPackages: cfg.Brain.InternalPackages, PipIndexURL: cfg.Brain.PipIndexURL}, proxy)
+		InternalPackages: cfg.Brain.InternalPackages, PipIndexURL: cfg.Brain.PipIndexURL,
+		SandboxURL: cfg.Sandbox.URL}, proxy)
+	sb, err := NewSandbox(cfg)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	if sb != nil {
+		runner.WithSandbox(sb)
+	}
 	worker := &orchestrator.Worker{Store: store, GitLab: gl, Poster: &orchestrator.Poster{GitLab: gl},
 		Brain: runner, Workspaces: &brain.Workspaces{Git: gm, WorkDir: cfg.Brain.WorkDir}, Git: gm,
 		Config: orchestrator.WorkerConfig{Workers: cfg.Worker.PoolSize, BotUserID: cfg.GitLab.BotUserID,
@@ -46,8 +58,31 @@ func Build(cfg *config.Config) (*App, error) {
 	triggers := &orchestrator.Triggers{Store: store, WebhookSecret: cfg.GitLab.WebhookSecret,
 		BotUserID: cfg.GitLab.BotUserID, TriggerLabel: cfg.Review.TriggerLabel,
 		Debounce: time.Duration(cfg.Brain.ReplyDebounceSec) * time.Second}
-	return &App{Config: cfg, Store: store, GitLab: gl, Git: gm, Proxy: proxy, Runner: runner,
-		Worker: worker, Triggers: triggers}, nil
+	return &App{Config: cfg, Store: store, GitLab: gl, Git: gm, Proxy: proxy, Sandbox: sb,
+		Runner: runner, Worker: worker, Triggers: triggers}, nil
+}
+
+// NewSandbox builds the sandbox service the configuration asks for (nil for "none").
+func NewSandbox(cfg *config.Config) (*sandbox.Service, error) {
+	var backend sandbox.Backend
+	switch cfg.Sandbox.Backend {
+	case "none", "":
+		return nil, nil
+	case "local":
+		if !sandbox.LocalAvailable() {
+			return nil, fmt.Errorf("HABODEK_SANDBOX=local needs unprivileged user namespaces (unshare -rn)")
+		}
+		backend = &sandbox.Local{}
+	case "docker":
+		backend = &sandbox.Docker{Image: cfg.Sandbox.Image, PrepNetwork: cfg.Sandbox.PrepNetwork}
+	default:
+		return nil, fmt.Errorf("unknown sandbox backend %q", cfg.Sandbox.Backend)
+	}
+	return sandbox.New(sandbox.Config{CacheDir: cfg.Sandbox.CacheDir, WorkDir: cfg.Sandbox.WorkDir,
+		IndexURL: cfg.Brain.PipIndexURL, FindLinks: cfg.Sandbox.FindLinks,
+		PrepTimeout: time.Duration(cfg.Sandbox.PrepMinutes) * time.Minute,
+		MemoryMB:    cfg.Sandbox.MemoryMB, CPUs: cfg.Sandbox.CPUs,
+		MaxParallel: cfg.Sandbox.MaxParallel}, backend)
 }
 
 func (a *App) Close() error { return a.Store.Close() }

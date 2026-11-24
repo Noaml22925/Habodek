@@ -51,6 +51,9 @@ select = ["E", "F", "I", "UP", "B"]
 # The probe runs on the VPN machine's system python3, whatever its age: it keeps to
 # old-style formatting on purpose.
 "probe/gateway_probe.py" = ["UP031", "UP032"]
+# Env-prep runs on the runner image's interpreter, without Habodek installed.
+"habodek/brain/sandbox/envprep.py" = ["UP031"]
+"agent/internal/pkg/sandbox/envprep.py" = ["UP031"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -19,3 +19,7 @@ Check, with the tools:
 
 Answer `upheld` only if the finding survives your attempt, `refuted` if you found
 evidence against it (cite it), `uncertain` if you cannot tell.
+{% if sandbox|default(false) %}
+
+{% include "_sandbox.md" %}
+{% endif %}

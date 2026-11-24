@@ -22,3 +22,7 @@ each `{path, line, quote, claim}`, quoting the code exactly as the tools showed 
 line per quote). Name the changed line (path and exact code of the added or removed
 line) — the comment will be anchored there. Include every affected site you found
 (for example each caller that breaks), not just the first.
+{% if sandbox|default(false) %}
+
+{% include "_sandbox.md" %}
+{% endif %}

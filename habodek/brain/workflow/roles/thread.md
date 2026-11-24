@@ -29,3 +29,7 @@ Procedure:
 
 Your `reply` is posted in the thread as is: short, specific, with path:line, no
 "LGTM", and never claim to resolve the thread.
+{% if sandbox|default(false) %}
+
+{% include "_sandbox.md" %}
+{% endif %}
