@@ -107,7 +107,7 @@ func (g *GitLab) handle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"iid": mr.IID, "title": mr.Title, "description": mr.Description,
 			"source_branch": mr.SourceBranch, "target_branch": mr.TargetBranch, "sha": mr.HeadSHA,
 			"web_url": fmt.Sprintf("%s/group/project/-/merge_requests/%d", g.Server.URL, mr.IID),
-			"author": map[string]string{"username": mr.Author}, "labels": mr.Labels, "draft": mr.Draft,
+			"author":  map[string]string{"username": mr.Author}, "labels": mr.Labels, "draft": mr.Draft,
 			"diff_refs": map[string]string{"base_sha": mr.BaseSHA, "start_sha": mr.StartSHA,
 				"head_sha": mr.HeadSHA}})
 		return

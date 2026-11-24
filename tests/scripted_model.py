@@ -216,6 +216,8 @@ def _line_of(text: str, path_header: str, needle: str) -> int | None:
 def _thread_methods():
     def _thread(self, step: int, task: str, messages: list) -> fg.Reply:
         f2 = "# Your finding F2" in task
+        if "payments-lib" in task.split("# The thread")[0]:
+            return self._thread_payments(step, messages)
         if step == 0:
             paths = (["orders/app.py", "orders/api/refunds.py", "orders/middleware/ownership.py"]
                      if f2 else ["platform_common/store/users.py",
@@ -280,6 +282,19 @@ def _thread_methods():
                                   {"path": "orders/app.py", "line": reg, "claim": "v1 bare",
                                    "quote": "router.register(refunds.bp)"}])
 
+    def _thread_payments(self, step: int, messages: list) -> fg.Reply:
+        if step == 0:
+            return fg.call("read", paths=["orders/domain/checkout.py"], reasoning="re-walk")
+        seen = _tool_text(messages)
+        line = _line_of(seen, "orders/domain/checkout.py", "except PaymentDeclined as exc:")
+        return fg.call("conclude_thread", claim_type="disagreement", verdict="stands",
+                       reason="checkout still relies on PaymentDeclined",
+                       reply="This still applies: checkout only handles declines through "
+                             "`except PaymentDeclined`, which 1.5.0 no longer raises.",
+                       remaining=[{"path": "orders/domain/checkout.py", "line": line,
+                                   "quote": "except PaymentDeclined as exc:",
+                                   "claim": "never fires with 1.5.0"}])
+
     def _challenger(self, step: int, task: str) -> fg.Reply:
         if step == 0:
             return fg.call("read", paths=["."], reasoning="attack the conclusion")
@@ -288,11 +303,11 @@ def _thread_methods():
                            "whole story; another path exists")
         return fg.call("challenge", outcome="agree", reason="the code supports the conclusion")
 
-    return _thread, _thread_f1, _thread_f2, _challenger
+    return _thread, _thread_f1, _thread_f2, _thread_payments, _challenger
 
 
 (ScriptedModel._thread, ScriptedModel._thread_f1, ScriptedModel._thread_f2,
- ScriptedModel._challenger) = _thread_methods()
+ ScriptedModel._thread_payments, ScriptedModel._challenger) = _thread_methods()
 
 
 def dump(body: dict) -> str:  # debugging aid

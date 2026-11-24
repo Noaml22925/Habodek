@@ -35,6 +35,20 @@ git diff upstream/main -- agent/internal/pkg/llm/openai.go
 
 Recorded here as they are made, so the delta stays legible.
 
+- **2026-11-24 — reviewer v2 (handoff M8).** Everything upstream did to *think*
+  about a merge request is gone: `internal/core/{agents,prompt,review,reply,feedback}`,
+  `internal/pkg/{llm,tools,queue,store}`, `internal/handler`, `internal/di` and most
+  of `internal/domain`. Reviews and thread answers are now made by the Python brain
+  (`habodek/brain`, one subprocess per job). What remains from upstream is the GitLab
+  REST client (`internal/pkg/gitlab`, extended with diff_refs, labels, draft, old-line
+  and file-level positions), the git transport (`internal/pkg/git`, extended with
+  worktrees, merge base and changed paths), the logger, and the module layout. New:
+  `internal/pkg/llmproxy` (per-model limited proxy to LiteLLM with raw traces),
+  `internal/core/brain` (contract, runner, worktrees), `internal/orchestrator`
+  (durable Postgres/SQLite queue, finding store, triggers, worker, poster) and
+  `internal/app`. The upstream MIT licence still covers the code that remains.
+  The entries below describe code that no longer exists; they are kept as history.
+
 - **2026-08-31** — Go module path renamed from
   `github.com/antlss/gitlab-review-agent` to `habodek` (58 files). A bare module
   name is valid for a private application; change it if this is ever published or

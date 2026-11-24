@@ -1,3 +1,4 @@
+// The Habodek control plane: GitLab webhooks in, reviews and thread answers out.
 package main
 
 import (
@@ -13,80 +14,51 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
-	"github.com/samber/do/v2"
 
+	"habodek/internal/app"
 	"habodek/internal/config"
-	"habodek/internal/di"
-	"habodek/internal/domain"
-	"habodek/internal/handler/cron"
-	"habodek/internal/handler/webhook"
-	"habodek/internal/handler/worker"
 	"habodek/internal/pkg/llmproxy"
-	"habodek/internal/pkg/queue"
+	"habodek/internal/pkg/logger"
 )
 
 func main() {
 	_ = godotenv.Load()
-
-	injector := do.New(
-		di.ConfigPackage,
-		di.InfraPackage,
-		di.CorePackage,
-		di.HandlerPackage,
-	)
-
-	cfg := do.MustInvoke[*config.Config](injector)
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+	logger.Setup(cfg.Log.Level, cfg.Log.Format)
 	if err := cfg.ValidateForServer(); err != nil {
 		slog.Error("invalid server configuration", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("starting ai-review-agent server", "store_driver", cfg.Store.Driver)
+	a, err := app.Build(cfg)
+	if err != nil {
+		slog.Error("startup", "error", err)
+		os.Exit(1)
+	}
+	defer a.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	// Start worker pool
-	pool := do.MustInvoke[*worker.Pool](injector)
-	pool.Start(ctx)
-
-	// Start cron runner
-	cronRunner := do.MustInvoke[*cron.Runner](injector)
-	cronRunner.Start()
-	defer cronRunner.Stop()
-
-	// Webhook handler needs server context for bounding background goroutines
-	webhookHandler := webhook.NewHandler(webhook.HandlerDeps{
-		WebhookSecret:      cfg.GitLab.WebhookSecret,
-		BotUserID:          cfg.GitLab.BotUserID,
-		ReviewTriggerLabel: cfg.Review.TriggerLabel,
-		RepoSettings:       do.MustInvoke[domain.RepositorySettingsStore](injector),
-		ReviewJobStore:     do.MustInvoke[domain.ReviewJobStore](injector),
-		ReplyJobStore:      do.MustInvoke[domain.ReplyJobStore](injector),
-		GitLabClient:       do.MustInvoke[domain.GitLabClient](injector),
-		Queue:              do.MustInvoke[*queue.Queue](injector),
-		ServerCtx:          ctx,
-	})
+	workers := a.Worker.Start(ctx)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
-	r.Post("/webhook/gitlab", webhookHandler.HandleGitLabEvent)
-	r.Get("/health", webhookHandler.HandleHealth)
+	r.Post("/webhook/gitlab", a.Triggers.ServeHTTP)
+	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
 	// The brain's only route to the models: per-job tokens, per-model limits, raw traces.
-	r.Post(llmproxy.Path, do.MustInvoke[*llmproxy.Proxy](injector).ServeHTTP)
+	r.Post(llmproxy.Path, a.Proxy.ServeHTTP)
 
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
-	server := &http.Server{
-		Addr:    addr,
-		Handler: r,
-	}
-
-	slog.Info("server listening", "addr", addr)
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
+	server := &http.Server{Addr: addr, Handler: r, ReadHeaderTimeout: 30 * time.Second}
+	slog.Info("habodek control plane listening", "addr", addr, "store", cfg.Store.Driver,
+		"workers", cfg.Worker.PoolSize, "gateway_rpm_per_model", cfg.Brain.GatewayRPM)
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)
@@ -94,27 +66,19 @@ func main() {
 		}
 	}()
 
-	<-sigCh
-	slog.Info("shutting down...")
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
-
-	server.Shutdown(shutdownCtx)
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	slog.Info("shutting down; running tasks are re-queued when their lease expires")
+	shutdown, done := context.WithTimeout(context.Background(), 30*time.Second)
+	defer done()
+	_ = server.Shutdown(shutdown)
 	cancel()
-
-	jobQueue := do.MustInvoke[*queue.Queue](injector)
-	jobQueue.Close()
-	webhookHandler.Shutdown()
-
-	workerDone := make(chan struct{})
-	go func() { pool.Wait(); close(workerDone) }()
+	stopped := make(chan struct{})
+	go func() { workers.Wait(); close(stopped) }()
 	select {
-	case <-workerDone:
-		slog.Info("all workers stopped gracefully")
-	case <-shutdownCtx.Done():
-		slog.Warn("shutdown timeout — some workers may still be running")
+	case <-stopped:
+	case <-shutdown.Done():
+		slog.Warn("shutdown timeout; some brain jobs were interrupted")
 	}
-
-	slog.Info("server stopped")
 }

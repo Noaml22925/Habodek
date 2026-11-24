@@ -1,126 +1,78 @@
-# Habodek agent
+# Habodek control plane (Go)
 
-Fork of [gitlab-review-agent](https://github.com/antlss/gitlab-review-agent) (MIT).
-Provenance and our accumulated changes: [`NOTICE.md`](NOTICE.md).
-Upstream's own feature documentation is preserved at
-[`README.upstream.md`](README.upstream.md) and is still the best reference for
-options this file does not cover.
+The part of Habodek that talks to GitLab and runs the reviewer. It does not decide
+anything about code: the Python brain (`habodek/brain`, see the repository root)
+does, one subprocess per job. This service fetches the bytes, queues the work, keeps
+the brain away from every secret, and posts what the brain decided.
 
-## Pointing it at our LiteLLM gateway
-
-The OpenAI client here is hand-rolled `net/http` — a plain
-`POST {base}/chat/completions` with `Authorization: Bearer`, a standard `tools`
-array and standard `tool_calls` parsing. Any OpenAI-compatible endpoint works, so
-our gateway needs **no code change**, only configuration:
-
-```bash
-LLM_DEFAULT_PROVIDER=openai
-LLM_DEFAULT_MODEL=qwen3.6
-OPENAI_BASE_URL=https://litellm.internal/v1
-OPENAI_API_KEY=sk-...
+```
+GitLab --webhook--> triggers --> durable queue --> worker --> worktrees --> habodek-brain
+   ^                                                  |                        |
+   |                                                  |                LLM proxy (per-model
+   +-------- threads, replies <---- poster <---- result.json               limits, raw trace)
+                                                                              |
+                                                                           LiteLLM
 ```
 
-Two things to know:
+## What triggers what
 
-* **Context window.** `resolveContextWindow` (`internal/pkg/llm/client.go`) looks
-  the model up in `defaultContextWindows` (`internal/config/config.go`) and falls
-  back to **128k** for anything unknown. That is correct for qwen3.6. For a model
-  with a larger window, add a line to that map or it silently under-uses context.
-* **`max_completion_tokens`.** `internal/pkg/llm/openai.go` sends the newer field
-  name. LiteLLM normally translates it; if a model rejects it, change that one
-  word to `max_tokens`.
-
-`OPENAI_API_KEYS` (plural) accepts a comma-separated list and load-balances across
-them. Per-repository model overrides are supported through repository settings, so
-different teams can run different models.
-
-## GitLab
-
-```bash
-GITLAB_BASE_URL=https://gitlab.internal
-GITLAB_TOKEN=...              # group or project access token, api scope
-GITLAB_WEBHOOK_SECRET=...
-GITLAB_BOT_USER_ID=...        # the bot's own user id — the loop guard
-```
-
-`GITLAB_BOT_USER_ID` matters: it is how the agent ignores its own notes. Get it
-wrong and it will reply to itself.
-
-Webhook: Merge request events + Comment events → `http://<host>:8080/webhook`.
-
-## Triggering
-
-Reviews are **label-triggered**, not automatic on push — add `ai-review`
-(`REVIEW_TRIGGER_LABEL`) to an MR. This is the cost control: nothing runs unless
-somebody asks. The CLI bypasses the label check and always reviews.
-
-Replies are handled automatically: when a human comments in one of the agent's own
-threads, the replier agent wakes up with the thread history and the code at HEAD,
-and answers with a verdict on its own finding — it stands, it is withdrawn, or the
-code now fixes it. After a push, every open thread gets the same treatment against
-the new code (`REVIEW_THREAD_VERDICTS`).
-
-The agent never resolves a thread. It states a conclusion; you decide.
-
-## Cost and size controls
-
-| Variable | Default | Effect |
+| GitLab event | Task | Priority |
 |---|---|---|
-| `REVIEW_MAX_FILES_BEFORE_SAMPLE` | 150 | Above this, sample rather than review everything |
-| `REVIEW_LARGE_PR_ACTION` | `sample` | `sample` or `block` |
-| `REVIEW_CHUNK_THRESHOLD` | 21 | File count that switches unified → chunked review |
-| `REVIEW_TRIAGE_THRESHOLD` | 81 | File count that switches chunked → triage |
-| `REVIEW_MAX_PARALLEL_CHUNKS` | 5 | Concurrency, and therefore burst token spend |
-| `REVIEW_MAX_FINDINGS` | 10 | Hard cap on comments posted per review |
-| `REVIEW_THREAD_VERDICTS` | `true` | Re-check open threads after a push; one LLM call each |
-| `REVIEW_MAX_VERDICT_THREADS` | 20 | Ceiling on re-checks per review |
-| `LLM_CONTEXT_COMPRESSION_THRESHOLD` | 0.55 | Fraction of context before compression |
+| The trigger label (`REVIEW_TRIGGER_LABEL`, default `ai-review`) added, or an MR opened with it | review the MR at its head | review |
+| A human note in a thread the bot opened | answer it (debounced `HABODEK_REPLY_DEBOUNCE_SEC`, default 60 s) | reply |
+| New commits on a labelled MR | re-check every open finding whose evidence chain the commits touch | recheck |
 
-`REVIEW_MAX_FINDINGS` is the noise dial. Start it low. A reviewer that posts thirty
-threads on one MR gets muted within a fortnight, and a muted reviewer reviews
-nothing.
+Replies go ahead of re-checks, which go ahead of reviews. At most one task per thread
+runs at a time, and a newer event replaces a queued one (a reply and a re-check never
+both answer). The bot never resolves threads; it states a verdict and the developer
+decides.
 
-The cap ranks before it cuts — severity, then confidence, then file risk — so
-criticals survive it. What it does not do is defer: a finding cut by the budget
-is gone, because the next review diffs from this head and never revisits those
-lines. `go run ./cmd/cli findings --project-id <id> --mr-id <iid>` shows what was
-dropped and by which filter.
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `GITLAB_BASE_URL`, `GITLAB_TOKEN` | required | GitLab API access (stays in this process) |
+| `GITLAB_WEBHOOK_SECRET`, `GITLAB_BOT_USER_ID` | required for the server | webhook check; recognising the bot's own notes |
+| `HABODEK_GATEWAY_URL` (or `OPENAI_BASE_URL`) | required | the LiteLLM gateway |
+| `HABODEK_GATEWAY_KEY` (or `OPENAI_API_KEY`) | | the gateway key (never passed to the brain) |
+| `HABODEK_GATEWAY_RPM` | 25 | requests per minute **per model** |
+| `STORE_DRIVER` | `sqlite` | `postgres` in production (`DATABASE_URL`), `sqlite` (`SQLITE_PATH`) otherwise |
+| `WORKER_POOL_SIZE` | 3 | brain jobs at once |
+| `HABODEK_BRAIN_CMD` | `habodek-brain` | the brain executable |
+| `HABODEK_WORK_DIR`, `HABODEK_TRACE_DIR` | `data/jobs`, `data/traces` | worktrees (disposable), traces (kept) |
+| `HABODEK_INTERNAL_PACKAGES` | | internal Python packages whose source the brain reads (names or globs) |
+| `HABODEK_PIP_INDEX_URL` | | Artifactory index for that source |
+| `HABODEK_MAX_COMMENTS` | 6 | comments per review |
+| `GIT_REPOS_DIR` | `resource/repos` | project mirrors |
+
+Per-model behaviour, roles and prompts are configured in the brain
+(`habodek/brain/llm/models.yaml`), not here.
+
+## Commands
+
+```bash
+go run ./cmd/server                              # the service
+go run ./cmd/cli review --project 42 --mr 7      # dry run: prints the comments, posts nothing
+go run ./cmd/cli clone-all                       # pre-warm the mirrors
+```
 
 ## Where things are
 
+- `internal/orchestrator` — queue and finding store (`store.go`), webhook triggers,
+  worker, poster (GitLab position rules, diff_refs check, file-level fallback,
+  idempotent hidden markers).
+- `internal/core/brain` — the JSON contract with the brain, the subprocess runner,
+  worktrees. `testdata/` holds golden files that the Python tests also check.
+- `internal/pkg/llmproxy` — `POST /internal/llm/v1/chat/completions`.
+- `internal/pkg/gitlab`, `internal/pkg/git` — GitLab REST and git transport.
+
+## Tests
+
+```bash
+GOFLAGS=-mod=vendor go test -race ./...
+HABODEK_TEST_POSTGRES='postgres://…?sslmode=disable' go test ./internal/orchestrator/   # + Postgres
+HABODEK_E2E=1 go test -run TestEndToEnd ./internal/orchestrator/   # with the real brain
 ```
-cmd/server            webhook server
-cmd/cli               interactive dry-run review, and clone-all
-internal/config       every env var, and defaultContextWindows
-internal/pkg/llm      openai.go / anthropic.go / google.go, balancer, retry
-internal/pkg/tools    read_file, search_code, read_multi_file
-internal/pkg/gitlab   discussions, notes, ResolveDiscussion
-internal/core/prompt  THE PROMPTS — plain string constants, edit as text
-internal/core/review  pipeline, planner, risk scoring, chunking, output parsing
-internal/core/reply   intent classification and the reply pipeline
-internal/core/agents  reviewer/ and replier/
-internal/handler      webhook, worker pool, cron
-internal/pkg/store    file / sqlite / postgres backends
-```
 
-**To change what the reviewer looks for, edit `internal/core/prompt/`.** Those are
-Go string constants containing markdown — editing them needs no Go.
-
-## Maintaining this
-
-We are the only maintainer; upstream is dormant. Practical notes:
-
-* Run `go test -race ./...`, not just `go test`. The worker pool, queue and cron
-  are genuinely concurrent, and races do not reliably fail a normal test run. This
-  is the one part of the codebase where Python intuition actively misleads: Go has
-  real parallelism and no GIL.
-* The compiler is the safety net. Wrong Go fails `go build` in seconds.
-* **SQLite needs CGO, and this machine has no C compiler** — so `CGO_ENABLED=0`,
-  `go-sqlite3` compiles to a stub, and its store tests fail. Confirmed, not
-  theoretical. Use `STORE_DRIVER=file` locally; the Dockerfile sets
-  `CGO_ENABLED=1` and builds it properly.
-* **`go test -race` will not run here either** — the race detector also requires
-  cgo. Run it in Docker or WSL, or install a toolchain
-  (`winget install BrechtSanders.WinLibs.POSIX.UCRT`) and set `CGO_ENABLED=1`.
-* Score prompt changes with the harness in [`../eval`](../eval) before shipping
-  them. "It felt better" is not evidence.
+The end-to-end test runs label → in-progress note → a thread with its evidence chain
+→ a reply → a verdict, against a fake GitLab, the real brain and a scripted gateway.

@@ -88,7 +88,7 @@ func (r *Runner) Run(ctx context.Context, job Job) (*Result, error) {
 		"--out", resultPath, "--trace", traceDir)
 	cmd := exec.CommandContext(ctx, r.cfg.Command, args...)
 	cmd.Dir = jobDir
-	cmd.Env = r.env(token, jobDir)
+	cmd.Env = r.env(token)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	runErr := cmd.Run()
@@ -110,10 +110,12 @@ func (r *Runner) Run(ctx context.Context, job Job) (*Result, error) {
 	return result, nil
 }
 
-func (r *Runner) env(token, jobDir string) []string {
+func (r *Runner) env(token string) []string {
 	env := []string{
 		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + jobDir,
+		// The real HOME: user-site packages and pip's cache live under it. It is not a
+		// secret; GitLab and gateway credentials are what stays out of this list.
+		"HOME=" + os.Getenv("HOME"),
 		"LANG=C.UTF-8",
 		"HABODEK_LLM_BASE_URL=" + r.cfg.ProxyURL,
 		"HABODEK_LLM_TOKEN=" + token,
@@ -128,7 +130,7 @@ func (r *Runner) env(token, jobDir string) []string {
 		env = append(env, "HABODEK_PIP_INDEX_URL="+r.cfg.PipIndexURL)
 	}
 	for _, key := range []string{"HABODEK_MODELS_YAML", "HABODEK_MODEL_QWEN", "HABODEK_MODEL_GLM",
-		"VIRTUAL_ENV", "PYTHONPATH"} {
+		"HABODEK_PIP_FIND_LINKS", "VIRTUAL_ENV", "PYTHONPATH"} {
 		if v, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+v)
 		}

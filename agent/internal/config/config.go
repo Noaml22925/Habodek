@@ -1,3 +1,8 @@
+// Package config loads the control plane's settings from the environment.
+//
+// Reviewer v2: the control plane fetches code, queues work, runs the Python brain
+// and posts its results. Everything about *how* to review lives in the brain
+// (habodek/brain, models.yaml), not here.
 package config
 
 import (
@@ -13,34 +18,10 @@ type Config struct {
 	Store  StoreConfig
 	GitLab GitLabConfig
 	Git    GitConfig
-	LLM    LLMConfig
 	Worker WorkerConfig
 	Review ReviewConfig
-	Tool   ToolConfig
-	Cron   CronConfig
 	Log    LogConfig
 	Brain  BrainConfig
-}
-
-// BrainConfig configures the Python brain (reviewer v2) and the LLM proxy in front of
-// the gateway. The brain never sees the gateway key or the GitLab token.
-type BrainConfig struct {
-	Command          string // habodek-brain executable
-	WorkDir          string // per-job worktrees and job.json
-	TraceDir         string // per-job traces (kept)
-	ProxyURL         string // how the brain reaches this server's LLM proxy
-	GatewayURL       string // LiteLLM base URL (defaults to OPENAI_BASE_URL)
-	GatewayKey       string // LiteLLM key (defaults to OPENAI_API_KEY)
-	GatewayRPM       float64
-	TimeoutMinutes   int
-	InternalPackages string // passed to the brain (HABODEK_INTERNAL_PACKAGES)
-	PipIndexURL      string // Artifactory simple index for dependency source
-	MaxComments      int
-	ReplyDebounceSec int
-}
-
-type GitConfig struct {
-	ReposDir string
 }
 
 type ServerConfig struct {
@@ -48,15 +29,11 @@ type ServerConfig struct {
 	Host string
 }
 
-// StoreConfig holds the configuration for the storage backend.
-// Driver selects the backend: "postgres", "sqlite", or "file".
+// StoreConfig: Driver "postgres" (production: the durable queue) or "sqlite".
 type StoreConfig struct {
-	Driver       string // "postgres" | "sqlite" | "file"
-	PostgresURL  string
-	MaxOpenConns int
-	MaxIdleConns int
-	SQLitePath   string // path to SQLite database file
-	DataDir      string // base directory for file-based storage
+	Driver      string
+	PostgresURL string
+	SQLitePath  string
 }
 
 type GitLabConfig struct {
@@ -66,73 +43,16 @@ type GitLabConfig struct {
 	BotUserID     int64
 }
 
-type LLMConfig struct {
-	DefaultProvider      string // "openai" | "anthropic" | "google"
-	DefaultModel         string
-	OpenAIAPIKey         string   // primary key (first from OpenAIAPIKeys)
-	OpenAIAPIKeys        []string // all keys for load balancing
-	OpenAIBaseURL        string
-	AnthropicAPIKey      string   // primary key (first from AnthropicAPIKeys)
-	AnthropicAPIKeys     []string // all keys for load balancing
-	GoogleAPIKey         string   // primary key (first from GoogleAPIKeys)
-	GoogleAPIKeys        []string // all keys for load balancing
-	ContextWindowSizes   map[string]int
-	CompressionThreshold float64
-	// Seed pins sampling for reproducible runs. nil means the field is omitted
-	// from the request, which is the default and the right setting for
-	// production. Set it only when measuring, via LLM_SEED.
-	Seed *int
+type GitConfig struct {
+	ReposDir string
 }
 
 type WorkerConfig struct {
-	PoolSize       int
-	PollIntervalMs int
+	PoolSize int // brain jobs run at once (requests are the bottleneck, not CPU)
 }
 
 type ReviewConfig struct {
-	MaxFilesBeforeSample int
-	SampleFileCount      int
-	LargePRAction        string // "sample" | "block"
-	PreloadDiffThreshold int    // max file count to pre-inject ALL diffs into user message (default 20)
-	PreloadDiffMaxKB     int    // max total KB of pre-injected diff content (default 100)
-	ResponseLanguage     string // "en" | "vi" | "ja" — language for AI-generated GitLab comments/replies
-	TriggerLabel         string // MR label that triggers review (default "ai-review")
-	ChunkSize            int    // files per review chunk when chunked mode is selected
-	MaxParallelChunks    int    // max concurrent chunk reviews
-	ChunkThreshold       int    // minimum file count that switches review mode from unified to chunked
-	TriageThreshold      int    // minimum file count that switches review mode from chunked to triage
-	MaxFindings          int    // maximum number of unsuppressed findings posted per review
-	// ThreadVerdicts re-checks every open bot thread against the code at HEAD
-	// after a push and answers it with an explicit verdict. Costs one LLM call
-	// per open thread, so it is capped by MaxVerdictThreads and can be turned
-	// off entirely.
-	ThreadVerdicts    bool
-	MaxVerdictThreads int
-	// StructuredMaxTokens caps the output of each structured-review LLM call.
-	// Too low and the model is cut off mid-JSON and the response fails to
-	// parse; reasoning models need extra headroom because their thinking
-	// tokens are spent from this same budget.
-	StructuredMaxTokens int
-}
-
-type ToolConfig struct {
-	ReadFileMaxKB          int
-	SearchMaxResults       int
-	MultiDiffMaxFiles      int
-	MultiDiffMaxKB         int
-	ReadMultiFileMaxFiles  int
-	ReadMultiFilePerFileKB int
-	ToolResultMaxLines     int
-	BaseSHA                string   `json:"-"` // Set per-job, not from env
-	HeadSHA                string   `json:"-"` // Set per-job, not from env
-	GitEnv                 []string `json:"-"` // Set per-job, git environment for token injection
-}
-
-type CronConfig struct {
-	FeedbackConsolidateSchedule   string
-	FeedbackConsolidateMinCount   int
-	FeedbackConsolidateMinAgeDays int
-	FeedbackCustomPromptMaxWords  int
+	TriggerLabel string // MR label that requests a review
 }
 
 type LogConfig struct {
@@ -140,50 +60,41 @@ type LogConfig struct {
 	Format string
 }
 
-var defaultContextWindows = map[string]int{
-	// OpenAI
-	"gpt-4o":       128000,
-	"gpt-4o-mini":  128000,
-	"gpt-4.1":      1047576,
-	"gpt-4.1-mini": 1047576,
-	"o1":           200000,
-	"o3-mini":      200000,
-	// Anthropic
-	"claude-sonnet":              200000,
-	"claude-3-5-sonnet-20241022": 200000,
-	"claude-3-7-sonnet-20250219": 200000,
-	"claude-sonnet-4-5":          200000,
-	"claude-opus-4-5":            200000,
-	"claude-haiku-4-5-20251001":  200000,
-	// Google
-	"gemini-pro":             1000000,
-	"gemini-1.5-pro":         2000000,
-	"gemini-1.5-flash":       1000000,
-	"gemini-2.0-flash-exp":   1000000,
-	"gemini-2.5-pro-preview": 1000000,
+// BrainConfig configures the Python brain and the LLM proxy in front of the gateway.
+// The brain never sees the gateway key or the GitLab token.
+type BrainConfig struct {
+	Command          string // habodek-brain executable
+	WorkDir          string // per-job worktrees and job.json (disposable)
+	TraceDir         string // per-job traces (kept)
+	ProxyURL         string // how the brain reaches this server's LLM proxy
+	GatewayURL       string // LiteLLM base URL
+	GatewayKey       string // LiteLLM key
+	GatewayRPM       float64
+	TimeoutMinutes   int
+	InternalPackages string // HABODEK_INTERNAL_PACKAGES for the brain
+	PipIndexURL      string // Artifactory simple index for dependency source
+	MaxComments      int
+	ReplyDebounceSec int
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{}
-
 	cfg.Server.Port = envOrDefault("SERVER_PORT", "8080")
 	cfg.Server.Host = envOrDefault("SERVER_HOST", "0.0.0.0")
 
-	cfg.Store.Driver = strings.ToLower(envOrDefault("STORE_DRIVER", "file"))
+	cfg.Store.Driver = strings.ToLower(envOrDefault("STORE_DRIVER", "sqlite"))
 	switch cfg.Store.Driver {
 	case "postgres":
 		cfg.Store.PostgresURL = os.Getenv("DATABASE_URL")
 		if cfg.Store.PostgresURL == "" {
 			return nil, fmt.Errorf("DATABASE_URL is required when STORE_DRIVER=postgres")
 		}
-		cfg.Store.MaxOpenConns = envIntOrDefault("DATABASE_MAX_OPEN_CONNS", 25)
-		cfg.Store.MaxIdleConns = envIntOrDefault("DATABASE_MAX_IDLE_CONNS", 5)
-	case "sqlite":
-		cfg.Store.SQLitePath = envOrDefault("SQLITE_PATH", "data/review-agent.db")
-	case "file":
-		cfg.Store.DataDir = envOrDefault("STORE_DATA_DIR", "data")
+	case "sqlite", "file":
+		// "file" was the v1 default; v2 keeps its state in SQLite instead.
+		cfg.Store.Driver = "sqlite"
+		cfg.Store.SQLitePath = envOrDefault("SQLITE_PATH", "data/habodek.db")
 	default:
-		return nil, fmt.Errorf("unsupported STORE_DRIVER: %s (must be postgres, sqlite, or file)", cfg.Store.Driver)
+		return nil, fmt.Errorf("unsupported STORE_DRIVER: %s (must be postgres or sqlite)", cfg.Store.Driver)
 	}
 
 	cfg.GitLab.BaseURL = os.Getenv("GITLAB_BASE_URL")
@@ -196,61 +107,19 @@ func Load() (*Config, error) {
 	}
 	cfg.GitLab.WebhookSecret = os.Getenv("GITLAB_WEBHOOK_SECRET")
 	cfg.GitLab.BotUserID = int64(envIntOrDefault("GITLAB_BOT_USER_ID", 0))
-
 	cfg.Git.ReposDir = envOrDefault("GIT_REPOS_DIR", "resource/repos")
-
-	cfg.LLM.DefaultProvider = envOrDefault("LLM_DEFAULT_PROVIDER", "openai")
-	cfg.LLM.DefaultModel = envOrDefault("LLM_DEFAULT_MODEL", "gpt-4o")
-	cfg.LLM.OpenAIAPIKeys = parseMultiKeys("OPENAI_API_KEY", "OPENAI_API_KEYS")
-	cfg.LLM.OpenAIAPIKey = firstOrEmpty(cfg.LLM.OpenAIAPIKeys)
-	cfg.LLM.OpenAIBaseURL = envOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1")
-	cfg.LLM.AnthropicAPIKeys = parseMultiKeys("ANTHROPIC_API_KEY", "ANTHROPIC_API_KEYS")
-	cfg.LLM.AnthropicAPIKey = firstOrEmpty(cfg.LLM.AnthropicAPIKeys)
-	cfg.LLM.GoogleAPIKeys = parseMultiKeys("GOOGLE_API_KEY", "GOOGLE_API_KEYS")
-	cfg.LLM.GoogleAPIKey = firstOrEmpty(cfg.LLM.GoogleAPIKeys)
-	cfg.LLM.ContextWindowSizes = contextWindowSizes(os.Getenv("LLM_CONTEXT_WINDOWS"))
-	cfg.LLM.CompressionThreshold = envFloatOrDefault("LLM_CONTEXT_COMPRESSION_THRESHOLD", 0.55)
-	cfg.LLM.Seed = envIntPtr("LLM_SEED")
-
-	cfg.Worker.PoolSize = envIntOrDefault("WORKER_POOL_SIZE", 5)
-	cfg.Worker.PollIntervalMs = envIntOrDefault("WORKER_POLL_INTERVAL_MS", 500)
-
-	cfg.Review.MaxFilesBeforeSample = envIntOrDefault("REVIEW_MAX_FILES_BEFORE_SAMPLE", 150)
-	cfg.Review.SampleFileCount = envIntOrDefault("REVIEW_SAMPLE_FILE_COUNT", 30)
-	cfg.Review.LargePRAction = envOrDefault("REVIEW_LARGE_PR_ACTION", "sample")
-	cfg.Review.PreloadDiffThreshold = envIntOrDefault("REVIEW_PRELOAD_DIFF_THRESHOLD", 20)
-	cfg.Review.PreloadDiffMaxKB = envIntOrDefault("REVIEW_PRELOAD_DIFF_MAX_KB", 100)
-	cfg.Review.ResponseLanguage = envOrDefault("AI_RESPONSE_LANGUAGE", "en")
+	cfg.Worker.PoolSize = envIntOrDefault("WORKER_POOL_SIZE", 3)
 	cfg.Review.TriggerLabel = envOrDefault("REVIEW_TRIGGER_LABEL", "ai-review")
-	cfg.Review.ChunkSize = envIntOrDefault("REVIEW_CHUNK_SIZE", 10)
-	cfg.Review.MaxParallelChunks = envIntOrDefault("REVIEW_MAX_PARALLEL_CHUNKS", 5)
-	cfg.Review.ChunkThreshold = envIntOrDefault("REVIEW_CHUNK_THRESHOLD", 21)
-	cfg.Review.TriageThreshold = envIntOrDefault("REVIEW_TRIAGE_THRESHOLD", 81)
-	cfg.Review.MaxFindings = envIntOrDefault("REVIEW_MAX_FINDINGS", 10)
-	cfg.Review.ThreadVerdicts = envBoolOrDefault("REVIEW_THREAD_VERDICTS", true)
-	cfg.Review.MaxVerdictThreads = envIntOrDefault("REVIEW_MAX_VERDICT_THREADS", 20)
-	cfg.Review.StructuredMaxTokens = envIntOrDefault("REVIEW_STRUCTURED_MAX_TOKENS", 8192)
-
-	cfg.Tool.ReadFileMaxKB = envIntOrDefault("TOOL_READ_FILE_MAX_KB", 30)
-	cfg.Tool.SearchMaxResults = envIntOrDefault("TOOL_SEARCH_MAX_RESULTS", 20)
-	cfg.Tool.MultiDiffMaxFiles = envIntOrDefault("TOOL_MULTI_DIFF_MAX_FILES", 15)
-	cfg.Tool.MultiDiffMaxKB = envIntOrDefault("TOOL_MULTI_DIFF_MAX_KB", 60)
-	cfg.Tool.ReadMultiFileMaxFiles = envIntOrDefault("TOOL_READ_MULTI_FILE_MAX_FILES", 8)
-	cfg.Tool.ReadMultiFilePerFileKB = envIntOrDefault("TOOL_READ_MULTI_FILE_PER_FILE_MAX_KB", 15)
-	cfg.Tool.ToolResultMaxLines = envIntOrDefault("TOOL_RESULT_MAX_LINES", 60)
-
-	cfg.Cron.FeedbackConsolidateSchedule = envOrDefault("CRON_FEEDBACK_CONSOLIDATE_SCHEDULE", "0 2 * * 1")
-	cfg.Cron.FeedbackConsolidateMinCount = envIntOrDefault("FEEDBACK_CONSOLIDATE_MIN_COUNT", 30)
-	cfg.Cron.FeedbackConsolidateMinAgeDays = envIntOrDefault("FEEDBACK_CONSOLIDATE_MIN_AGE_DAYS", 14)
-	cfg.Cron.FeedbackCustomPromptMaxWords = envIntOrDefault("FEEDBACK_CUSTOM_PROMPT_MAX_WORDS", 800)
 
 	cfg.Brain.Command = envOrDefault("HABODEK_BRAIN_CMD", "habodek-brain")
 	cfg.Brain.WorkDir = envOrDefault("HABODEK_WORK_DIR", "data/jobs")
 	cfg.Brain.TraceDir = envOrDefault("HABODEK_TRACE_DIR", "data/traces")
 	cfg.Brain.ProxyURL = envOrDefault("HABODEK_PROXY_URL",
-		"http://127.0.0.1:"+envOrDefault("SERVER_PORT", "8080")+"/internal/llm/v1")
-	cfg.Brain.GatewayURL = envOrDefault("HABODEK_GATEWAY_URL", cfg.LLM.OpenAIBaseURL)
-	cfg.Brain.GatewayKey = envOrDefault("HABODEK_GATEWAY_KEY", cfg.LLM.OpenAIAPIKey)
+		"http://127.0.0.1:"+cfg.Server.Port+"/internal/llm/v1")
+	// OPENAI_BASE_URL / OPENAI_API_KEY are the v1 names for the LiteLLM gateway; the
+	// deployment already sets them.
+	cfg.Brain.GatewayURL = envOrDefault("HABODEK_GATEWAY_URL", os.Getenv("OPENAI_BASE_URL"))
+	cfg.Brain.GatewayKey = envOrDefault("HABODEK_GATEWAY_KEY", os.Getenv("OPENAI_API_KEY"))
 	cfg.Brain.GatewayRPM = envFloatOrDefault("HABODEK_GATEWAY_RPM", 25)
 	cfg.Brain.TimeoutMinutes = envIntOrDefault("HABODEK_BRAIN_TIMEOUT_MIN", 90)
 	cfg.Brain.InternalPackages = os.Getenv("HABODEK_INTERNAL_PACKAGES")
@@ -260,10 +129,10 @@ func Load() (*Config, error) {
 
 	cfg.Log.Level = strings.ToLower(envOrDefault("LOG_LEVEL", "info"))
 	cfg.Log.Format = strings.ToLower(envOrDefault("LOG_FORMAT", "json"))
-
 	return cfg, nil
 }
 
+// ValidateForServer checks what only the webhook server needs.
 func (c *Config) ValidateForServer() error {
 	if c.GitLab.WebhookSecret == "" {
 		return fmt.Errorf("GITLAB_WEBHOOK_SECRET is required")
@@ -271,89 +140,18 @@ func (c *Config) ValidateForServer() error {
 	if c.GitLab.BotUserID == 0 {
 		return fmt.Errorf("GITLAB_BOT_USER_ID is required")
 	}
-	return nil
-}
-
-func (c *Config) ValidateForReview() error {
-	if c.GitLab.BotUserID == 0 {
-		return fmt.Errorf("GITLAB_BOT_USER_ID is required")
+	if c.Brain.GatewayURL == "" {
+		return fmt.Errorf("HABODEK_GATEWAY_URL (or OPENAI_BASE_URL) is required")
 	}
 	return nil
 }
 
-// contextWindowSizes returns the built-in model→context-window map with any
-// overrides from LLM_CONTEXT_WINDOWS merged in.
-//
-// The format is comma-separated model=size pairs: "qwen3:8b=16384,qwen3.6=262144".
-// Model names may contain ':', so '=' separates the pair, not ':'.
-//
-// This exists because resolveContextWindow falls back to 128k for any unlisted
-// model. That silently over-estimates a locally served model (Ollama defaults to
-// a few thousand tokens and truncates without an error) and silently
-// under-estimates a large one. Both are configuration problems, so they get a
-// configuration fix rather than a code change per model.
-//
-// Malformed entries are skipped with a warning: a typo in an env var must not
-// stop the agent from starting.
-func contextWindowSizes(override string) map[string]int {
-	sizes := make(map[string]int, len(defaultContextWindows))
-	for model, window := range defaultContextWindows {
-		sizes[model] = window
+// StoreDSN returns the driver and DSN for the orchestrator store.
+func (c *Config) StoreDSN() (string, string) {
+	if c.Store.Driver == "postgres" {
+		return "postgres", c.Store.PostgresURL
 	}
-
-	for _, pair := range strings.Split(override, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-
-		model, size, found := strings.Cut(pair, "=")
-		model = strings.TrimSpace(model)
-		window, err := strconv.Atoi(strings.TrimSpace(size))
-
-		if !found || model == "" || err != nil || window <= 0 {
-			slog.Warn("config: ignoring malformed LLM_CONTEXT_WINDOWS entry",
-				"entry", pair, "expected", "model=size")
-			continue
-		}
-
-		sizes[model] = window
-	}
-
-	return sizes
-}
-
-func firstOrEmpty(s []string) string {
-	if len(s) > 0 {
-		return s[0]
-	}
-	return ""
-}
-
-// parseMultiKeys collects API keys from two env vars: the single-key var and the multi-key var.
-// OPENAI_API_KEY=key1 and OPENAI_API_KEYS=key2,key3 → [key1, key2, key3]
-// Deduplicates and trims whitespace.
-func parseMultiKeys(singleEnv, multiEnv string) []string {
-	seen := make(map[string]bool)
-	var keys []string
-
-	add := func(k string) {
-		k = strings.TrimSpace(k)
-		if k != "" && !seen[k] {
-			seen[k] = true
-			keys = append(keys, k)
-		}
-	}
-
-	add(os.Getenv(singleEnv))
-
-	if multi := os.Getenv(multiEnv); multi != "" {
-		for _, k := range strings.Split(multi, ",") {
-			add(k)
-		}
-	}
-
-	return keys
+	return "sqlite3", c.Store.SQLitePath
 }
 
 func envOrDefault(key, defaultVal string) string {
@@ -361,22 +159,6 @@ func envOrDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
-}
-
-// envIntPtr reads an optional integer. Unset returns nil, which callers treat
-// as "leave this out entirely" rather than as any particular value -- the
-// distinction zero cannot express.
-func envIntPtr(key string) *int {
-	v := os.Getenv(key)
-	if v == "" {
-		return nil
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		slog.Warn("invalid int config, ignoring", "key", key, "value", v)
-		return nil
-	}
-	return &n
 }
 
 func envIntOrDefault(key string, defaultVal int) int {
@@ -403,17 +185,4 @@ func envFloatOrDefault(key string, defaultVal float64) float64 {
 		return defaultVal
 	}
 	return f
-}
-
-func envBoolOrDefault(key string, defaultVal bool) bool {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultVal
-	}
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		slog.Warn("invalid bool config, using default", "key", key, "value", v, "default", defaultVal)
-		return defaultVal
-	}
-	return b
 }

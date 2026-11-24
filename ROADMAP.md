@@ -72,6 +72,34 @@ after M6 and M7 settle it.
 
 **Progress log (newest first).**
 
+- **M8 done (2026-11-24).** The control plane runs reviewer v2; the old brain is gone.
+  - `agent/internal/pkg/llmproxy`: `POST /internal/llm/v1/chat/completions`, per-job
+    tokens (→ priority + trace dir), one priority/AIMD bucket **per model**, gateway key
+    added here only, 429 retried inside, raw traffic to `<trace>/llm-proxy.jsonl`.
+  - `agent/internal/core/brain`: the Go side of the JSON contract (golden files checked
+    by both languages), the runner (cleared environment: proxy URL + job token; no
+    GitLab token, no gateway key), worktrees for head and merge base.
+  - `agent/internal/orchestrator`: durable queue + finding store on Postgres or SQLite
+    (priorities, debounce, supersede per thread, single-flight, leases); triggers
+    (label → review; human note in a bot thread → debounced reply; new commits →
+    re-check of findings whose chain they touch); worker; poster (new_line / old_line,
+    diff_refs check — a moved head re-queues instead of posting stale results —
+    file-level then MR-thread fallback, hidden markers checked before every write,
+    in-progress note, never resolves).
+  - Deleted: `internal/core/{agents,prompt,review,reply,feedback}`,
+    `internal/pkg/{llm,tools,queue,store}`, `internal/handler`, `internal/di`, most of
+    `internal/domain`; unused modules pruned from `go.mod`/`vendor` (still builds
+    offline from a fresh clone). `cmd/cli review` is a dry run through the brain.
+    Config is v2-only; `OPENAI_BASE_URL`/`OPENAI_API_KEY` still work as the gateway.
+  - Tests: store on SQLite and a real PostgreSQL 16; orchestrator flows on a fake
+    GitLab (`internal/testutil/fakegitlab`); `HABODEK_E2E=1` runs label → in-progress
+    note → thread with chain → reply → verdict with the **real brain** (S2).
+  - *Learned:* the end-to-end test caught a real bug — the runner set `HOME` to the
+    job directory, which hid user-site Python packages from the brain. The real `HOME`
+    is passed now (it is not a secret).
+  - Not covered yet: no reverse-dependency consumers are given to review jobs (M10),
+    so a library MR is reviewed with its own repo and pinned deps only.
+
 - **Owner's answers (2026-11-24, after M7):** the gateway limits **per model**, and
   the VPN Artifactory **proxies PyPI**. The brain's limiter is now a `LimiterPool`
   (one AIMD bucket per model: a 429 on Qwen does not slow GLM); the M8 proxy must
