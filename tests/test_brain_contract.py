@@ -50,9 +50,17 @@ def test_schema_export(tmp_path, capsys):
     assert (tmp_path / "result.schema.json").exists()
 
 
-def test_unimplemented_commands_say_which_milestone(capsys):
-    assert cli.main(["replay", "x"]) == 2
-    assert "M11" in capsys.readouterr().err
+def test_every_subcommand_is_implemented():
+    import argparse
+
+    parser = cli.build_parser()
+    sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    missing = []
+    for name, p in sub.choices.items():
+        nested = [a for a in p._actions if isinstance(a, argparse._SubParsersAction)]
+        targets = list(nested[0].choices.values()) if nested else [p]
+        missing += [name for t in targets if t.get_default("func") is None]
+    assert missing == []
 
 
 def test_marker():

@@ -51,6 +51,7 @@ from habodek.brain.sandbox.tool import (
     run_tool,
     witnesses_from,
 )
+from habodek.brain.trace.metrics import primary_category, run_metrics
 from habodek.brain.trace.writer import TraceWriter, new_run_id
 from habodek.brain.workflow import budget as caps
 from habodek.brain.workflow import evidence
@@ -167,7 +168,8 @@ class Hypothesis:
                 f"Changed line: {self.changed_path}: `{self.changed_code}`")
 
     def placeholder(self, status: str, stage: str, reason: str) -> Finding:
-        return Finding(id=self.id, title=self.claim[:120], severity=self.severity,
+        return Finding(id=self.id, hypothesis=self.id, title=self.claim[:120],
+                       severity=self.severity, category=",".join(self.lenses),
                        claim=self.claim, anchor=Anchor(path=self.changed_path or "?", line=0,
                                                        snippet=self.changed_code),
                        status=status, dropped_at=stage, drop_reason=reason[:500])
@@ -192,6 +194,7 @@ class Review:
         self.findings: list[Finding] = []  # every outcome: posted, dropped, not investigated
         self.not_investigated: list[str] = []
         self.unreviewed_lenses: list[str] = []
+        self.barred: list[str] = []
         self.receipts: dict[str, str] = {}
         self.investigated = 0
         self.changes: SymbolChanges | None = None
@@ -388,7 +391,11 @@ class Review:
                 twin.severity = h.severity
         merged.sort(key=lambda h: (SEVERITIES.index(h.severity), -len(h.lenses)))
         self.trace.event("triage", kept=[h.id for h in merged],
-                         merged=len(hypotheses) - len(merged))
+                         merged=len(hypotheses) - len(merged),
+                         hypotheses=[{"id": h.id, "claim": h.claim, "why": h.why,
+                                      "severity": h.severity, "lenses": h.lenses,
+                                      "changed": f"{h.changed_path}: {h.changed_code}"}
+                                     for h in merged])
         return merged
 
     # ------------------------------------------------------------------ investigate
@@ -459,7 +466,7 @@ class Review:
                 continue
             changed = out.get("changed_line") or {}
             finding = Finding(
-                id=h.id, title=str(out.get("title") or h.claim)[:160],
+                id=h.id, hypothesis=h.id, title=str(out.get("title") or h.claim)[:160],
                 severity=out.get("severity") if out.get("severity") in SEVERITIES
                 else h.severity, category=",".join(h.lenses), claim=str(out.get("claim")),
                 scenario=str(out.get("scenario") or ""), fix=str(out.get("fix") or ""),
@@ -703,6 +710,10 @@ class Review:
         if self.not_investigated:
             parts.append(f"Not investigated (request budget): {len(self.not_investigated)} — "
                          + "; ".join(self.not_investigated[:3]))
+        if self.barred:
+            bars = ", ".join(f"{b.category} ({b.acceptance:.0%} accepted, {b.min_severity}+)"
+                             for b in self.job.policy.bars)
+            parts.append(f"Held back by a raised bar ({bars}): " + "; ".join(self.barred[:3]))
         if self.unreviewed_lenses:
             parts.append("Not reviewed (no walk recorded): " + ", ".join(self.unreviewed_lenses))
         if self._is_library():
@@ -719,6 +730,28 @@ class Review:
             return False
         match = re.search(r'^name\s*=\s*"([^"]+)"', pyproject.read_text(), re.MULTILINE)
         return bool(match and pydeps.is_internal(match.group(1), self.config.internal_packages))
+
+    # ------------------------------------------------------------------ bars
+    def apply_bars(self, upheld: list[Finding]) -> list[Finding]:
+        """Raised bars (design §6.10): where developers have been rejecting a category,
+        its findings post only at the bar's severity or above. Held-back findings are
+        recorded with the acceptance that raised the bar, and named in the summary."""
+        bars = {b.category: b for b in self.job.policy.bars}
+        if not bars:
+            return upheld
+        kept = []
+        for f in upheld:
+            bar = bars.get(primary_category(f))
+            if bar and SEVERITIES.index(f.severity) > SEVERITIES.index(bar.min_severity):
+                reason = (f"bar raised for {bar.category}: acceptance {bar.acceptance:.0%} over "
+                          f"{bar.outcomes} thread outcomes; posts {bar.min_severity} and above")
+                self._drop(f, "bar", reason)
+                self.barred.append(f"{f.severity} {bar.category}: {f.title[:80]}")
+                continue
+            kept.append(f)
+        self.trace.event("bar_raised", bars=[b.model_dump() for b in bars.values()],
+                         held_back=len(upheld) - len(kept))
+        return kept
 
     # ------------------------------------------------------------------ run
     def run(self) -> Result:
@@ -738,6 +771,7 @@ class Review:
         checked = self.check(confirmed)
         upheld = self.verify(checked)
         upheld += self.reverse_audit(upheld, hypotheses)
+        upheld = self.apply_bars(upheld)
         posted, judge_text = self.judge(upheld)
         result = self._result("ok", posted, self.summary(posted, judge_text))
         self.trace.event("review_end", seconds=round(time.monotonic() - started, 1),
@@ -758,6 +792,7 @@ class Review:
                         requests=self.budget.used, llm=self.client.stats.as_dict(),
                         memory_commit=self.memory.commit if self.memory else "")
         self.trace.write_json("findings.json", [f.model_dump() for f in result.findings])
+        self.trace.write_json("metrics.json", run_metrics(result.findings))
         return result
 
 

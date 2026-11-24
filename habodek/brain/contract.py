@@ -106,6 +106,7 @@ class Verification(_Model):
 
 class Finding(_Model):
     id: str
+    hypothesis: str = ""  # the hypothesis it grew from (H<n>), kept when id is renamed
     title: str
     severity: Severity = "major"
     category: str = ""
@@ -181,10 +182,25 @@ class _JobBase(_Model):
     models: ModelRouting = Field(default_factory=ModelRouting)
 
 
+class CategoryBar(_Model):
+    """A raised bar (design §6.10): findings of this category (their primary lens) post
+    only at min_severity or above, because developers' acceptance of it fell."""
+
+    category: str
+    min_severity: Severity
+    acceptance: float  # accepted / (accepted + withdrawn) over recent thread outcomes
+    outcomes: int
+
+
+class Policy(_Model):
+    bars: list[CategoryBar] = Field(default_factory=list)
+
+
 class ReviewJob(_JobBase):
     kind: Literal["review"] = "review"
     max_comments: int = 6
     open_findings: list[Finding] = Field(default_factory=list)  # earlier threads, not repeated
+    policy: Policy = Field(default_factory=Policy)
 
 
 class ThreadJob(_JobBase):

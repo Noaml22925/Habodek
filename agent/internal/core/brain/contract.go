@@ -83,6 +83,7 @@ type Verification struct {
 
 type Finding struct {
 	ID            string         `json:"id"`
+	Hypothesis    string         `json:"hypothesis,omitempty"`
 	Title         string         `json:"title"`
 	Severity      string         `json:"severity,omitempty"`
 	Category      string         `json:"category,omitempty"`
@@ -126,10 +127,25 @@ type Job struct {
 	// review only
 	MaxComments  int       `json:"max_comments,omitempty"`
 	OpenFindings []Finding `json:"open_findings,omitempty"`
+	Policy       *Policy   `json:"policy,omitempty"`
 	// thread only
 	Event   string   `json:"event,omitempty"` // reply | push
 	Finding *Finding `json:"finding,omitempty"`
 	Notes   []Note   `json:"notes,omitempty"`
+}
+
+// CategoryBar raises the bar for one finding category (its primary lens) after its
+// acceptance fell (design §6.10): such findings post only at MinSeverity or above.
+type CategoryBar struct {
+	Category    string  `json:"category"`
+	MinSeverity string  `json:"min_severity"`
+	Acceptance  float64 `json:"acceptance"`
+	Outcomes    int     `json:"outcomes"`
+}
+
+// Policy is the per-repository posting policy the control plane derives (M11).
+type Policy struct {
+	Bars []CategoryBar `json:"bars"`
 }
 
 // Envelope is the shape of job.json.

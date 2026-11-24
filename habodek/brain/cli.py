@@ -6,7 +6,9 @@
     habodek-brain fake-gateway --script S.json  a scripted gateway for offline runs
     habodek-brain map     --job job.json --out result.json --trace DIR   the cartographer
     habodek-brain memory-apply --repo DIR --result result.json     commit memory updates
-    habodek-brain replay | probe                                   (M11)
+    habodek-brain trace show RUN [--out FILE]                      static HTML of a run
+    habodek-brain replay RUN [--model ROLE=M] [--from-stage S]     re-run from its cassette
+    habodek-brain probe RUN --hypothesis "..." [--verify]          one investigator, one idea
 
 Exit codes: 0 ok (including a skipped job), 1 the job failed (result.json says why),
 2 usage error or not implemented yet.
@@ -24,14 +26,14 @@ from pathlib import Path
 from habodek.brain import __version__
 from habodek.brain.contract import json_schemas
 
-_LATER = {"replay": "M11", "probe": "M11"}
+_LATER: dict[str, str] = {}
 
 
 def _home() -> Path:
     return Path(os.environ.get("HABODEK_HOME", Path.home() / ".habodek"))
 
 
-def _client(trace, limiter=None):
+def _client(trace, limiter=None, transport=None, base_url=None):
     from habodek.brain.config import Config
     from habodek.brain.llm.client import LLMClient
     from habodek.brain.llm.limiter import LimiterPool
@@ -39,9 +41,9 @@ def _client(trace, limiter=None):
 
     config = Config.from_env()
     limiter = limiter or LimiterPool(config.rpm, burst=config.rpm_burst)
-    return LLMClient(config.llm_base_url or None, config.llm_token,
+    return LLMClient(base_url or config.llm_base_url or None, config.llm_token,
                      profiles=load_profiles(config.models_yaml), limiter=limiter, trace=trace,
-                     timeout=config.request_timeout_s)
+                     timeout=config.request_timeout_s, transport=transport)
 
 
 def _review_config():
@@ -73,7 +75,8 @@ def _sandbox(ws, mode: str | None = None, find_links: tuple[str, ...] = ()):
                             tuple(find_links) or config.pip_find_links)
 
 
-def _run_job(job, ws, trace_dir: Path, limiter=None, sandbox=None):
+def _run_job(job, ws, trace_dir: Path, limiter=None, sandbox=None, transport=None,
+             base_url=None):
     from habodek.brain.sandbox.core import RunLog, recipe_for
     from habodek.brain.thread.agent import run_thread
     from habodek.brain.trace.writer import TraceWriter
@@ -88,10 +91,13 @@ def _run_job(job, ws, trace_dir: Path, limiter=None, sandbox=None):
         trace.event("sandbox", backend=sandbox.name, roots=list(roots), recipe=runs.recipe)
     from habodek.brain.config import Config
     from habodek.brain.memory.context import open_view
+    from habodek.brain.trace.runinfo import write_run_json
 
     memory = open_view(job)
     trace.event("memory", path=job.memory_path, commit=memory.commit if memory else "")
-    with _client(trace, limiter) as client:
+    with _client(trace, limiter, transport, base_url) as client:
+        write_run_json(trace, job, ws, dict(client.profiles.roles),
+                       memory.commit if memory else "", sandbox.name if sandbox else "none")
         if job.kind == "map":
             from habodek.brain.memory.cartographer import run_map
 
@@ -146,6 +152,115 @@ def _cmd_memory_apply(args: argparse.Namespace) -> int:
     message = args.message or f"{'+'.join(kinds)} for {project} (job {result.job_id}, " \
                               f"run {result.run_id})"
     print(apply_updates(Path(args.repo), result.memory_updates, message))
+    return 0
+
+
+def _cmd_trace(args: argparse.Namespace) -> int:
+    from habodek.brain.trace.view import show
+
+    print(show(args.run, args.out))
+    return 0
+
+
+def _cmd_replay(args: argparse.Namespace) -> int:
+    """Re-run a recorded run: from its cassette, or live from a stage / with a model."""
+    from habodek.brain.trace import replay as rp
+
+    run_dir = Path(args.run)
+    info = rp.read_run(run_dir)
+    out = Path(args.out or (run_dir.parent / f"{run_dir.name}-replay-{int(time.time())}"))
+    job, ws, notes = rp.rebuild_workspace(info, out / "work")
+    for spec in args.model or []:
+        role, _, model = spec.partition("=")
+        job.models.roles[role.strip()] = model.strip()
+    live = rp.live_url() if (args.model or args.from_stage or args.live) else ""
+    if (args.model or args.from_stage) and not live:
+        print("replay: --model / --from-stage need a live gateway (HABODEK_LLM_BASE_URL)",
+              file=sys.stderr)
+        return 2
+    transport = rp.CassetteTransport(rp.load_cassette(run_dir), live, args.from_stage)
+    sandbox = rp.replay_sandbox(info, run_dir, ws, out / "sandbox-cache")
+    limiter = None
+    if not live:  # nothing leaves the process: the gateway's limits do not apply
+        from habodek.brain.llm.limiter import LimiterPool
+
+        limiter = LimiterPool(1_000_000, burst=1_000)
+    result = _run_job(job, ws, out / "trace", limiter=limiter, sandbox=sandbox,
+                      transport=transport, base_url=live or rp.CASSETTE_URL)
+    (out / "trace" / "result.json").write_text(result.model_dump_json(indent=2))
+    original = {}
+    if (run_dir / "result.json").is_file():
+        original = json.loads((run_dir / "result.json").read_text())
+    t = transport.tally
+    lines = [f"replay of {info.get('run_id')} ({info.get('kind')}): {result.status}, "
+             f"cassette {t.hits} hit(s), live {t.live}, missed {len(t.misses)}"]
+    lines += [f"  root {n}" for n in notes[:4]]
+    if t.misses:
+        lines.append(f"  first miss: {t.misses[0]} (the harness asked something new)")
+    if result.kind == "review":
+        before = sorted(c["finding_id"] for c in original.get("comments") or [])
+        after = sorted(c.finding_id for c in result.comments)
+        same = "same comments" if before == after else f"comments {before} -> {after}"
+        lines.append(f"  {same}; requests {original.get('requests', '?')} -> {result.requests}")
+    elif result.thread:
+        was = (original.get("thread") or {}).get("verdict", "?")
+        lines.append(f"  verdict {was} -> {result.thread.verdict}")
+    lines.append(f"details: {out / 'trace'}")
+    print("\n".join(lines))
+    (out / "replay.json").write_text(json.dumps({"hits": t.hits, "live": t.live,
+                                                 "misses": t.misses, "roots": notes}, indent=2))
+    return 0 if not t.misses or live else 1
+
+
+def _cmd_probe(args: argparse.Namespace) -> int:
+    """One investigator on a stated hypothesis, in a recorded run's workspace."""
+    from habodek.brain.memory.context import open_view
+    from habodek.brain.trace import replay as rp
+    from habodek.brain.trace.writer import TraceWriter
+    from habodek.brain.workflow.pipeline import Hypothesis, Review
+
+    run_dir = Path(args.run)
+    info = rp.read_run(run_dir)
+    if info.get("kind") != "review":
+        print("probe: only review runs can be probed", file=sys.stderr)
+        return 2
+    out = Path(args.out or (run_dir.parent / f"{run_dir.name}-probe-{int(time.time())}"))
+    job, ws, notes = rp.rebuild_workspace(info, out / "work")
+    path, _, code = (args.changed_line or "").partition("::")
+    trace = TraceWriter(out / "trace")
+    with _client(trace) as client:
+        review = Review(job, ws, client, trace, _review_config(), memory=open_view(job))
+        review.prepare()
+        h = Hypothesis(id="P1", claim=args.hypothesis.strip(), why="stated by a person (probe)",
+                       severity=args.severity, changed_path=path.strip(),
+                       changed_code=code.strip(), lenses=["probe"])
+        stage = review._stage("investigate")
+        confirmed = review.investigate([h], stage)
+        lines = [f"probe of {info.get('run_id')}: {h.claim[:90]}"]
+        if not confirmed:
+            dropped = next((f for f in review.findings if f.hypothesis == "P1"), None)
+            lines.append(f"  investigation: {dropped.drop_reason[:150] if dropped else '?'}")
+        else:
+            checked = review.check(confirmed)
+            if not checked:
+                f = review.findings[-1]
+                lines.append(f"  confirmed, then dropped at {f.dropped_at}: {f.drop_reason[:120]}")
+            else:
+                f = checked[0]
+                lines.append(f"  confirmed: {f.title[:120]}")
+                lines.append(f"  anchor {f.anchor.path}:{f.anchor.line}; chain:")
+                lines += [f"    {(x.repo + ':') if x.repo else ''}{x.path}:{x.line} "
+                          f"{x.quote[:70]}" for x in f.chain[:6]]
+                if args.verify:
+                    upheld = review.verify(checked)
+                    verdicts = ", ".join(f"{v.verifier} {v.outcome}" for v in f.verifications)
+                    lines.append(f"  verifiers: {verdicts} -> "
+                                 f"{'would post' if upheld else 'would not post'}")
+        lines.append("  " + rp.original_outcome(run_dir, h.claim))
+        lines.append(f"  requests {review.budget.used}")
+        lines.append(f"details: {out / 'trace'}")
+    trace.write_json("findings.json", [f.model_dump() for f in review.findings])
+    print("\n".join(lines[:20]))
     return 0
 
 
@@ -281,9 +396,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sandbox", choices=["auto", "local", "none"], default="auto",
                    help="where agents' `run` tool executes (auto: local if unshare works)")
     p.set_defaults(func=_cmd_scorecard)
-    for name in ("replay", "probe"):
-        p = sub.add_parser(name)
-        p.add_argument("rest", nargs=argparse.REMAINDER)
+    p = sub.add_parser("trace", help="render a run as one static HTML file")
+    tsub = p.add_subparsers(dest="trace_command", required=True)
+    t = tsub.add_parser("show", help="write trace.html for a run directory")
+    t.add_argument("run")
+    t.add_argument("--out")
+    t.set_defaults(func=_cmd_trace)
+    p = sub.add_parser("replay", help="re-run a recorded run from its cassette")
+    p.add_argument("run")
+    p.add_argument("--out")
+    p.add_argument("--model", action="append", metavar="ROLE=MODEL",
+                   help="change a role's model (that role's requests go live)")
+    p.add_argument("--from-stage", choices=["understand", "hypothesise", "investigate",
+                                            "verify", "judge"],
+                   help="send this stage and later ones to the live gateway")
+    p.add_argument("--live", action="store_true",
+                   help="answer cassette misses from the live gateway instead of failing")
+    p.set_defaults(func=_cmd_replay)
+    p = sub.add_parser("probe", help="investigate a stated hypothesis in a run's workspace")
+    p.add_argument("run")
+    p.add_argument("--hypothesis", required=True)
+    p.add_argument("--changed-line", help="PATH::CODE of the changed line it is about")
+    p.add_argument("--severity", choices=["critical", "major", "minor"], default="major")
+    p.add_argument("--verify", action="store_true", help="also run both verifiers")
+    p.add_argument("--out")
+    p.set_defaults(func=_cmd_probe)
 
     p = sub.add_parser("schema", help="export the job/result JSON Schemas")
     p.add_argument("--out")

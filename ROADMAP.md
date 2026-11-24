@@ -72,6 +72,13 @@ after M6 and M7 settle it.
 
 **Progress log (newest first).**
 
+- **M11 in progress (2026-11-24, branch `habodek-brain-rework`).** Landed: `run.json`
+  per run (job, every root's SHA, prompt hashes, roles, memory commit, sandbox);
+  findings keep their hypothesis id; `metrics.json` (the funnel per lens); `trace show`
+  (static HTML); `replay` (cassette, live from a stage, another model; recorded sandbox
+  runs); `probe`. Still to land: acceptance metrics and automatic bar-raising in the
+  control plane. Details when M11 is done.
+
 - **M10 done (2026-11-24).** Memory: reviews no longer start from zero.
   - `habodek-memory`: a git repo of markdown (`habodek/brain/memory/store.py`),
     `projects/<path>/{card.md, facts.json, lessons/*.md}`. Jobs read it **at a commit**
