@@ -235,3 +235,4 @@ agent/resource/
 # Keeping stale ones in the tree invites re-applying the wrong one.
 *.patch
 eval/scenarios/_build/
+build-logs/

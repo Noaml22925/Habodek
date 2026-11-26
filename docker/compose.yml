@@ -1,0 +1,48 @@
+# Habodek on the VPN host: Postgres and the control plane (which runs the brain and
+# starts sandbox containers through the host's Docker socket).
+#
+#   cd docker && cp habodek.env.example habodek.env    # fill it in
+#   DOCKER_GID=$(getent group docker | cut -d: -f3) docker compose --env-file compose.env up -d
+#
+# compose.env holds REGISTRY, HABODEK_TAG, POSTGRES_PASSWORD, HABODEK_DATA (see
+# DEPLOY.md). Images come from docker/build.sh; Postgres from the Artifactory proxy.
+services:
+  postgres:
+    image: ${REGISTRY:?set REGISTRY to the Artifactory Docker proxy}/postgres:16
+    environment:
+      POSTGRES_DB: habodek
+      POSTGRES_USER: habodek
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U habodek -d habodek"]
+      interval: 10s
+      retries: 10
+
+  habodek:
+    image: habodek-control:${HABODEK_TAG:-latest}
+    env_file: habodek.env
+    environment:
+      STORE_DRIVER: postgres
+      DATABASE_URL: postgres://habodek:${POSTGRES_PASSWORD}@postgres:5432/habodek?sslmode=disable
+      HABODEK_SANDBOX: docker
+      HABODEK_SANDBOX_IMAGE: habodek-runner:${HABODEK_TAG:-latest}
+      # The sandbox mounts job directories into sibling containers, so Docker needs
+      # host paths: /var/lib/habodek inside is ${HABODEK_DATA} on the host.
+      HABODEK_DOCKER_PATH_MAP: /var/lib/habodek=${HABODEK_DATA:-/var/lib/habodek}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ${HABODEK_DATA:-/var/lib/habodek}:/var/lib/habodek
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:?set DOCKER_GID to the docker group id}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -106,6 +107,9 @@ type SandboxConfig struct {
 	Image       string // runner image (python 3.12 + pytest)
 	PrepNetwork string // docker network env-prep uses to reach Artifactory
 	FindLinks   []string
+	// PathMap translates this process's paths to the Docker host's when the control
+	// plane itself runs in a container ("from=to,from=to"; longest prefix wins).
+	PathMap     map[string]string
 	MemoryMB    int
 	CPUs        float64
 	MaxParallel int
@@ -178,6 +182,17 @@ func Load() (*Config, error) {
 		if p = strings.TrimSpace(p); p != "" {
 			cfg.Sandbox.FindLinks = append(cfg.Sandbox.FindLinks, p)
 		}
+	}
+	cfg.Sandbox.PathMap = map[string]string{}
+	for _, pair := range strings.Split(os.Getenv("HABODEK_DOCKER_PATH_MAP"), ",") {
+		from, to, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if !ok || from == "" || to == "" {
+			if strings.TrimSpace(pair) != "" {
+				return nil, fmt.Errorf("HABODEK_DOCKER_PATH_MAP: %q is not from=to", pair)
+			}
+			continue
+		}
+		cfg.Sandbox.PathMap[filepath.Clean(from)] = filepath.Clean(to)
 	}
 	cfg.Sandbox.MemoryMB = envIntOrDefault("HABODEK_SANDBOX_MEMORY_MB", 4096)
 	cfg.Sandbox.CPUs = envFloatOrDefault("HABODEK_SANDBOX_CPUS", 2)

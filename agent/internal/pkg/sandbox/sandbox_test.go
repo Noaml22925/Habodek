@@ -289,3 +289,16 @@ for host, port in (("127.0.0.1", %d), ("10.0.0.1", 80), ("1.1.1.1", 53)):
 		t.Fatalf("timeout not enforced: %+v", timed)
 	}
 }
+
+func TestPrefixMap(t *testing.T) {
+	m := PrefixMap(map[string]string{"/data": "/srv/hbk", "/data/cache": "/fast/cache"})
+	for in, want := range map[string]string{"/data/jobs/1": "/srv/hbk/jobs/1", "/data": "/srv/hbk",
+		"/data/cache/venvs/k": "/fast/cache/venvs/k", "/database/x": "/database/x", "/other": "/other"} {
+		if got := m(in); got != want {
+			t.Errorf("%s -> %s, want %s", in, got, want)
+		}
+	}
+	if PrefixMap(nil) != nil {
+		t.Error("an empty map is no mapping")
+	}
+}

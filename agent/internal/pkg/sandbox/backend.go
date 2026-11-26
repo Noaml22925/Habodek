@@ -329,3 +329,23 @@ func tailBytes(b []byte, n int) string {
 	}
 	return string(b[len(b)-n:])
 }
+
+// PrefixMap returns a MapPath that rewrites the longest matching directory prefix
+// (from -> to); paths outside every prefix are returned unchanged.
+func PrefixMap(m map[string]string) func(string) string {
+	if len(m) == 0 {
+		return nil
+	}
+	return func(p string) string {
+		best := ""
+		for from := range m {
+			if (p == from || strings.HasPrefix(p, from+"/")) && len(from) > len(best) {
+				best = from
+			}
+		}
+		if best == "" {
+			return p
+		}
+		return m[best] + strings.TrimPrefix(p, best)
+	}
+}

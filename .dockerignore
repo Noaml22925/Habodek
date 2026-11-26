@@ -1,0 +1,17 @@
+# Build context for docker/*.Dockerfile is the repository root.
+.git
+**/.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+eval/scenarios/_build
+eval/corpus/.cases
+.habodek-work
+agent/bin
+agent/data
+agent/resource
+agent/.env
+local/.env
+data
+**/node_modules

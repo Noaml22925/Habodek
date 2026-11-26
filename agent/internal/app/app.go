@@ -92,7 +92,8 @@ func NewSandbox(cfg *config.Config) (*sandbox.Service, error) {
 		}
 		backend = &sandbox.Local{}
 	case "docker":
-		backend = &sandbox.Docker{Image: cfg.Sandbox.Image, PrepNetwork: cfg.Sandbox.PrepNetwork}
+		backend = &sandbox.Docker{Image: cfg.Sandbox.Image, PrepNetwork: cfg.Sandbox.PrepNetwork,
+			MapPath: sandbox.PrefixMap(cfg.Sandbox.PathMap)}
 	default:
 		return nil, fmt.Errorf("unknown sandbox backend %q", cfg.Sandbox.Backend)
 	}
