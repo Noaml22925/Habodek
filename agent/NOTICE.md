@@ -35,6 +35,10 @@ git diff upstream/main -- agent/internal/pkg/llm/openai.go
 
 Recorded here as they are made, so the delta stays legible.
 
+- **2026-11-26 — offline delivery (handoff M12).** Built in `docker/control.Dockerfile`
+  from the vendor tree with no network; `HABODEK_DOCKER_PATH_MAP`
+  (`sandbox.PrefixMap`); sandbox containers run as this process's uid by default.
+
 - **2026-11-24 — observability (handoff M11).** `internal/orchestrator/acceptance.go`:
   acceptance per category from thread outcomes, raised bars passed to review jobs as
   `policy`, `GET /internal/metrics`, `cmd/cli metrics`. Contract: `Finding.hypothesis`,

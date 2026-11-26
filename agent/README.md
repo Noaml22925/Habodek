@@ -48,6 +48,7 @@ decides.
 | `HABODEK_MAX_COMMENTS` | 6 | comments per review |
 | `GIT_REPOS_DIR` | `resource/repos` | project mirrors |
 | `HABODEK_SANDBOX` | `none` | where the brain's `run` tool executes code: `docker` (production), `local` (`unshare`, dev boxes), `none` (no run tool) |
+| `HABODEK_DOCKER_PATH_MAP` | | `from=to,…`: when this service runs in a container, the host paths behind its paths (the sandbox hands Docker host paths); compose sets it |
 | `HABODEK_SANDBOX_IMAGE` | `habodek-runner:latest` | runner image (`docker/runner.Dockerfile`) |
 | `HABODEK_SANDBOX_PREP_NETWORK` | `bridge` | Docker network env-prep uses to reach Artifactory (`HABODEK_PIP_INDEX_URL`); runs always get `--network none` |
 | `HABODEK_SANDBOX_CACHE`, `HABODEK_SANDBOX_WORK` | `data/sandbox`, `data/sandbox-runs` | cached venvs (by dependency files + recipe), throwaway copies |

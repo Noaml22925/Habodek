@@ -52,11 +52,12 @@ func TestCacheKeyMatchesThePythonImplementation(t *testing.T) {
 }
 
 func TestDockerRunIsLockedDown(t *testing.T) {
-	d := &Docker{Image: "habodek-runner:1", MapPath: func(p string) string { return "/host" + p }}
+	d := &Docker{Image: "habodek-runner:1", User: "10001:10001",
+		MapPath: func(p string) string { return "/host" + p }}
 	args := strings.Join(d.ExecArgs("habodek-run-x", ExecSpec{Work: "/w/run/work", Venv: "/c/venvs/k",
 		Cmd: "python -m pytest -q", MemoryMB: 1024, CPUs: 1.5}), " ")
 	for _, want := range []string{"--network none", "--read-only", "--cap-drop ALL",
-		"--security-opt no-new-privileges", "--user 65534:65534", "--memory 1024m", "--memory-swap 1024m",
+		"--security-opt no-new-privileges", "--user 10001:10001", "--memory 1024m", "--memory-swap 1024m",
 		"--cpus 1.5", "--pids-limit 512", "-v /host/w/run/work:/work", "-v /host/c/venvs/k:/venv:ro",
 		"habodek-runner:1 sh -c python -m pytest -q"} {
 		if !strings.Contains(args, want) {
@@ -70,7 +71,8 @@ func TestDockerRunIsLockedDown(t *testing.T) {
 	}
 	prep := strings.Join(d.PrepArgs("habodek-prep-x", PrepSpec{Src: "/w/head", Venv: "/c/venvs/k",
 		Script: "/c/envprep-1.py", Recipe: "/w/base/.habodek.md", IndexURL: "https://artifactory/simple"}), " ")
-	for _, want := range []string{"--network bridge", "-v /host/w/head:/src:ro", "-v /host/c/venvs/k:/venv",
+	for _, want := range []string{"--network bridge", "--user 10001:10001", "--cap-drop ALL",
+		"-v /host/w/head:/src:ro", "-v /host/c/venvs/k:/venv",
 		"python /opt/habodek/envprep.py --src /src --venv /venv --recipe /opt/habodek/recipe.md",
 		"--index-url https://artifactory/simple"} {
 		if !strings.Contains(prep, want) {
@@ -300,5 +302,16 @@ func TestPrefixMap(t *testing.T) {
 	}
 	if PrefixMap(nil) != nil {
 		t.Error("an empty map is no mapping")
+	}
+}
+
+func TestDockerDefaultsToTheControlPlanesOwnUser(t *testing.T) {
+	want := fmt.Sprintf("--user %d:%d", os.Getuid(), os.Getgid())
+	d := &Docker{Image: "img"}
+	for _, args := range [][]string{d.ExecArgs("n", ExecSpec{Work: "/w", Venv: "/v", Cmd: "true"}),
+		d.PrepArgs("n", PrepSpec{Src: "/s", Venv: "/v", Script: "/e.py"})} {
+		if !strings.Contains(strings.Join(args, " "), want) {
+			t.Fatalf("%v lacks %s", args, want)
+		}
 	}
 }

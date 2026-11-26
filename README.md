@@ -12,8 +12,9 @@ chain. When a developer replies or pushes a fix, it goes back to the code and st
 verdict. It never resolves threads; the developer decides. Silence on a clean MR is
 the headline property.
 
-**State (2026-11-24):** reviewer v2, milestones M0-M11 done on branch
-`habodek-brain-rework`; M12 (offline delivery to the VPN) is next.
+**State (2026-11-26):** reviewer v2 is built (milestones M0-M12) on branch
+`habodek-brain-rework`; next is deployment on the VPN and the acceptance test —
+start with [`HANDOFF.md`](HANDOFF.md), then [`DEPLOY.md`](DEPLOY.md).
 [`ROADMAP.md`](ROADMAP.md) is the handoff document and decision record.
 
 ## Layout
@@ -29,7 +30,8 @@ eval/scenarios/   Nine generated multi-repository scenarios with expected outcom
                   and reference reviews written with Claude Code.
 eval/corpus/      The v1 evaluation corpus (`habodek eval`), kept for history.
 probe/            The one-file gateway probe the owner runs on the VPN.
-docker/           The sandbox runner image (M12 adds the rest).
+docker/           Dockerfiles (brain, control, runner), compose, the VPN build script,
+                  the egress test.
 docs/             The v2 design, its implementation plan, and the survey behind it.
 ```
 

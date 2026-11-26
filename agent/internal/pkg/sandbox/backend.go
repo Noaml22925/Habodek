@@ -199,7 +199,10 @@ type Docker struct {
 	Binary      string // default "docker"
 	Image       string // runner image: python 3.12 + pytest
 	PrepNetwork string // default "bridge"
-	User        string // default "65534:65534"
+	// User both containers run as (default: this process's uid:gid). Running as the
+	// control plane's own unprivileged user means everything a run or env-prep
+	// writes is the control plane's to delete; capabilities are dropped either way.
+	User string
 	// MapPath translates a path on the control plane's filesystem to the Docker
 	// host's, when the control plane itself runs in a container (M12). nil = same.
 	MapPath func(string) string
@@ -210,6 +213,13 @@ func (d *Docker) bin() string {
 		return d.Binary
 	}
 	return "docker"
+}
+
+func (d *Docker) user() string {
+	if d.User != "" {
+		return d.User
+	}
+	return fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
 }
 
 func (d *Docker) host(p string) string {
@@ -235,7 +245,7 @@ func (d *Docker) PrepArgs(name string, spec PrepSpec) []string {
 		network = "bridge"
 	}
 	args := []string{"run", "--rm", "--name", name, "--network", network,
-		"--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+		"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", d.user(),
 		"-e", "HOME=/tmp", "-e", "PIP_DISABLE_PIP_VERSION_CHECK=1",
 		"-v", d.host(spec.Src) + ":/src:ro",
 		"-v", d.host(spec.Venv) + ":/venv",
@@ -258,10 +268,7 @@ func (d *Docker) PrepArgs(name string, spec PrepSpec) []string {
 
 // ExecArgs is the `docker run` argument list for a command (exported for tests).
 func (d *Docker) ExecArgs(name string, spec ExecSpec) []string {
-	user := d.User
-	if user == "" {
-		user = "65534:65534"
-	}
+	user := d.user()
 	mem := spec.MemoryMB
 	if mem <= 0 {
 		mem = 4096

@@ -606,6 +606,15 @@ threads, over the last 50 posted findings per category.
 
 ---
 
+*As built (2026-11-26):* no `docker save` bundle and no wheelhouse — Artifactory
+proxies PyPI and Docker base images, so `docker/build.sh` builds on the VPN host and
+runs the egress test inside the built control image (`--network none`). The egress
+test also runs the Go end-to-end test, not only the scenario suite, and adds a
+recording proxy sink to the audit hook. `ripgrep` comes from its PyPI wheel. Sandbox
+containers run as the control plane's uid rather than 65534, so their files stay
+deletable. Done-when ("the owner can install by following `DEPLOY.md`") can only be
+confirmed on the VPN host.
+
 ## 8. Done, for the whole thing
 
 The owner's final test on the VPN:

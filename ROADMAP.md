@@ -11,7 +11,7 @@ diff lines, answers reviewer replies, and re-checks its own threads after a fix
 
 ---
 
-## Current state — 2026-11-24: reviewer v2 being built; M0-M11 done, next is M12
+## Current state — 2026-11-26: reviewer v2 built (M0-M12); next is the owner's deployment and acceptance test
 
 **If you are the session that builds v2, start with
 [`docs/reviewer-v2-handoff.md`](docs/reviewer-v2-handoff.md).** It is the
@@ -71,6 +71,43 @@ hypothesis. M1's probe, which the owner runs on the VPN, and the optional scorec
 after M6 and M7 settle it.
 
 **Progress log (newest first).**
+
+- **M12 done (2026-11-26, branch `habodek-brain-rework`).** Offline delivery and the
+  egress test. Everything is built on the VPN host from Artifactory (it proxies PyPI
+  and Docker base images), so there is no bundle to carry but the repository.
+  - Images: `docker/brain.Dockerfile` (Python 3.12, the brain, `rg` from the
+    `ripgrep` PyPI wheel — no apt), `docker/control.Dockerfile` (Go built offline from
+    the vendor tree with `GOPROXY=off GOTOOLCHAIN=local` on Go 1.25.5, the docker CLI,
+    the e2e test binary, on top of the brain image), `docker/runner.Dockerfile`.
+  - `docker/compose.yml` (Postgres + the control plane, data directory and Docker
+    socket mounted) with `habodek.env.example` and `compose.env.example`;
+    `agent/.env.example` replaced (it was still v1). New `HABODEK_DOCKER_PATH_MAP`:
+    the sandbox hands Docker host paths when the control plane runs in a container.
+  - `docker/build.sh`: builds and checks the three images, a licence report
+    (`docker/licences.py`; all 31 Python and 32 Go dependencies permissive), image ids,
+    then the egress test; ≤ 20 lines, logs in `build-logs/`.
+  - **The egress test** (`docker/egress/`): the full scenario scorecard and the Go
+    end-to-end test inside a network namespace with only loopback (`--network none`
+    in the image; `--netns` on a host), an audit hook in every Python process
+    (records and refuses any non-loopback connect or lookup; the Go runner passes
+    `PYTHONPATH`, so brain subprocesses are covered) and a recording proxy sink for
+    HTTP from any process. Passes only if both runs pass and nothing was recorded.
+    Rehearsed here twice: 9/9 scenarios, e2e with sandbox, no attempts, 28 s.
+  - Rehearsed without Docker: the brain image's `pip install . ripgrep` in a clean
+    venv; the control image's offline Go build; the egress run with that install.
+  - **Fixed while checking the docs:** sandbox containers ran as root (env-prep) and
+    uid 65534 (runs) while the control plane runs as 10001, so it could not delete
+    failed venvs or directories a test created in its copy — a disk leak and dirty
+    retries. Both now run as the control plane's own uid by default.
+  - `HANDOFF.md` and `DEPLOY.md` rewritten for v2: the bundle, host needs, build,
+    bot account, configuration, start, webhook (merge request, comments, push), mapping
+    consumers, a first review and its trace, the acceptance test, operating it.
+  - Tests: 248 Python (+ the egress detectors catching a leak, a short namespaced
+    egress run, delivery files true to the code: every COPY source exists, every
+    templated variable is read); Go: path map, the sandbox's default user.
+  - *Not verified here:* no Docker daemon, so the images have never been built, and
+    the Docker sandbox backend has never run. `docker/build.sh` on the VPN host is the
+    first real check of both; its egress step runs inside the built image.
 
 - **M11 done (2026-11-24, branch `habodek-brain-rework`).** Observability: every
   "why did it say / miss that?" has an answer that does not need the gateway.
@@ -840,17 +877,20 @@ replaced the design doc's R0-R6):
       workflow (S1-S4 scorecard to offer) · [x] **M7** thread agent (S5-S9) · [x]
       **M8** into the Go control plane, old brain deleted · [x] **M9** sandboxed
       execution (Docker backend not yet run on a real daemon) · [x] **M10** memory ·
-      [x] **M11** observability · [ ] **M12** offline delivery, egress test → the
-      owner's final test
+      [x] **M11** observability · [x] **M12** offline delivery, egress test → [ ] the
+      owner's final test (DEPLOY.md §9)
 
 ---
 
 ## Next up
 
-**v2 (2026-11-24, after M11): M12, offline delivery and the egress test** (handoff
-§7). Work only on branch `habodek-brain-rework`. The VPN Artifactory proxies PyPI and
-Docker base images, so every image builds on the VPN host; rewrite `HANDOFF.md` and
-`DEPLOY.md` for v2. Still outstanding with the
+**v2 (2026-11-26, after M12): the owner deploys and runs the acceptance test** —
+`HANDOFF.md`, then `DEPLOY.md` (probe, `docker/build.sh`, configure, start, webhook,
+first MR, §9 acceptance). Work only on branch `habodek-brain-rework`. Offline work
+that remains, in order: match existing threads by meaning before posting (the brain
+receives the MR's open findings but does not use them yet, so a reworded re-review
+can open a duplicate thread); a per-repository minimum severity and a comment budget
+criticals do not count against (design §6.10; today a flat cap of 6). Still outstanding with the
 owner, none blocking: the M1 gateway probe result, and the S1-S9 scorecard offer
 (`habodek-brain scorecard --scenarios 1-9 --runs 3`; with M9 it uses the local
 sandbox where `unshare` works, and says so in its header). Do not block on the
@@ -1216,19 +1256,17 @@ agent/                   THE CONTROL PLANE (Go).
   internal/pkg/gitlab/, internal/pkg/git/   GitLab REST, git transport.
   cmd/server, cmd/cli    the service; review (dry run), map, metrics, clone-all.
 
-docker/runner.Dockerfile the sandbox runner image (M12 adds control and brain).
+docker/                  brain, control and runner Dockerfiles; compose.yml and the
+                         env templates; build.sh (build + checks + egress test on the
+                         VPN host); licences.py; egress/ (the egress test).
 prompts/reviewer-upgrade.md   the original brief for the v2 upgrade.
 
-HANDOFF.md               (v1; M12 rewrites it.) The first thing to read on the VPN machine: what the
-                         zip did not carry (both .env files), prerequisites,
-                         the Windows line-ending step, and the offline checks
-                         that must pass before touching the gateway.
+HANDOFF.md               Moving the code to the VPN host (git bundle), what the
+                         host needs, how the build stays offline.
 
-DEPLOY.md                (v1; M12 rewrites it.) The F6 checklist: bot account, config, webhook, the
-                         three gateway unknowns and how to test each, then the
-                         scoring loop and which prompt levers to pull once the
-                         numbers come from the real model. Written to be worked
-                         through top to bottom on the VPN.
+DEPLOY.md                The v2 deployment checklist: probe, build.sh (with the
+                         egress test), bot account, configuration, start, webhook,
+                         first review, the acceptance test, operating it.
 
 local/
   docker-compose.yml     GitLab CE, trimmed to fit beside a model on one machine.
