@@ -41,7 +41,7 @@ from habodek.brain.llm.client import LLMClient
 from habodek.brain.memory.context import memory_section
 from habodek.brain.memory.recall import recall_tool
 from habodek.brain.memory.rules import team_rules
-from habodek.brain.memory.store import MemoryView
+from habodek.brain.memory.store import MemoryView, similarity
 from habodek.brain.runtime.loop import AgentTask, LoopEngine, RunResult
 from habodek.brain.runtime.tool import Tool, ToolContext, code_tools
 from habodek.brain.sandbox.core import RunLog
@@ -195,6 +195,8 @@ class Review:
         self.not_investigated: list[str] = []
         self.unreviewed_lenses: list[str] = []
         self.barred: list[str] = []
+        self.repeated: list[str] = []  # open threads a finding matched
+        self.below_floor = 0
         self.receipts: dict[str, str] = {}
         self.investigated = 0
         self.changes: SymbolChanges | None = None
@@ -298,6 +300,8 @@ class Review:
             parts.append(f"# What the change is (from the lead reviewer)\n\n{self.understanding}")
         if self.rules:
             parts.append(self.rules)
+        if self._open_threads_text():
+            parts.append(self._open_threads_text())
         if extra:
             parts.append(extra)
         parts.append(f"# Evidence\n\n{self.pack}")
@@ -665,10 +669,10 @@ class Review:
                                  max_comments=self.job.max_comments), task, tool, stage)
         self._record_stage("judge", stage, 1, started, run.status)
         if not run.ok:  # deterministic fallback: they all survived two verifiers
-            return ordered[: self.job.max_comments], ""
+            return self._within_budget(ordered), ""
         out = run.output or {}
         by_id = {f.id: f for f in upheld}
-        post = [by_id[i] for i in out.get("post") or [] if i in by_id][: self.job.max_comments]
+        post = self._within_budget([by_id[i] for i in out.get("post") or [] if i in by_id])
         for item in out.get("drop") or []:
             f = by_id.get(item.get("id"))
             if f is not None and f not in post:
@@ -677,6 +681,18 @@ class Review:
             if f not in post and f.status != "dropped":
                 self._drop(f, "judge", "not selected")
         return post, str(out.get("summary", "")).strip()
+
+    def _within_budget(self, chosen: list[Finding]) -> list[Finding]:
+        """The comment budget (max_comments) applies to non-critical findings only:
+        a critical is always posted (design §6.10)."""
+        out, others = [], 0
+        for f in chosen:
+            if f.severity == "critical":
+                out.append(f)
+            elif others < self.job.max_comments:
+                out.append(f)
+                others += 1
+        return out
 
     @staticmethod
     def _check_decision(args: dict[str, Any], upheld: list[Finding]) -> str | None:
@@ -710,6 +726,12 @@ class Review:
         if self.not_investigated:
             parts.append(f"Not investigated (request budget): {len(self.not_investigated)} — "
                          + "; ".join(self.not_investigated[:3]))
+        if self.repeated:
+            parts.append(f"Not repeated: {len(self.repeated)} finding(s) already raised in "
+                         "open threads on this MR (re-checked in those threads).")
+        if self.below_floor:
+            parts.append(f"Below this repository's minimum severity "
+                         f"({self.job.policy.min_severity}): {self.below_floor} not posted.")
         if self.barred:
             bars = ", ".join(f"{b.category} ({b.acceptance:.0%} accepted, {b.min_severity}+)"
                              for b in self.job.policy.bars)
@@ -731,15 +753,61 @@ class Review:
         match = re.search(r'^name\s*=\s*"([^"]+)"', pyproject.read_text(), re.MULTILINE)
         return bool(match and pydeps.is_internal(match.group(1), self.config.internal_packages))
 
+    # ------------------------------------------------------------------ open threads
+    def open_thread_for(self, f: Finding) -> Finding | None:
+        """The MR's open thread that already raises this finding, if any (design §6.10:
+        existing threads are matched by meaning before anything is posted)."""
+        text = f"{f.title} {f.claim}"
+        files = {x.path for x in f.chain if not x.repo} | {f.anchor.path}
+        for o in self.job.open_findings:
+            if o.id == f.id:
+                return o
+            sim = similarity(text, f"{o.title} {o.claim}")
+            theirs = {x.path for x in o.chain if not x.repo} | {o.anchor.path}
+            if (f.anchor.path == o.anchor.path and sim >= 0.3) or (files & theirs and sim >= 0.45) \
+                    or sim >= 0.6:
+                return o
+        return None
+
+    def skip_open_threads(self, upheld: list[Finding]) -> list[Finding]:
+        kept = []
+        for f in upheld:
+            o = self.open_thread_for(f)
+            if o is None:
+                kept.append(f)
+                continue
+            self._drop(f, "open_thread", f"already raised in the open thread of finding {o.id} "
+                                         f"({o.title[:80]}); re-checked there, not repeated")
+            self.repeated.append(o.id)
+        return kept
+
+    def _open_threads_text(self) -> str:
+        if not self.job.open_findings:
+            return ""
+        items = "\n".join(f"- {o.title} (`{o.anchor.path}`, {o.severity})"
+                          for o in self.job.open_findings[:20])
+        return ("# Already raised in open threads on this MR\n\nThese have threads of their "
+                "own, re-checked when the code changes. Do not propose them again; look for "
+                f"anything else.\n\n{items}")
+
     # ------------------------------------------------------------------ bars
     def apply_bars(self, upheld: list[Finding]) -> list[Finding]:
         """Raised bars (design §6.10): where developers have been rejecting a category,
         its findings post only at the bar's severity or above. Held-back findings are
         recorded with the acceptance that raised the bar, and named in the summary."""
+        floor = self.job.policy.min_severity
+        kept = []
+        for f in upheld:
+            if SEVERITIES.index(f.severity) > SEVERITIES.index(floor):
+                self._drop(f, "policy", f"{f.severity}: below this repository's minimum "
+                                        f"severity ({floor})")
+                self.below_floor += 1
+                continue
+            kept.append(f)
+        upheld, kept = kept, []
         bars = {b.category: b for b in self.job.policy.bars}
         if not bars:
             return upheld
-        kept = []
         for f in upheld:
             bar = bars.get(primary_category(f))
             if bar and SEVERITIES.index(f.severity) > SEVERITIES.index(bar.min_severity):
@@ -771,6 +839,7 @@ class Review:
         checked = self.check(confirmed)
         upheld = self.verify(checked)
         upheld += self.reverse_audit(upheld, hypotheses)
+        upheld = self.skip_open_threads(upheld)
         upheld = self.apply_bars(upheld)
         posted, judge_text = self.judge(upheld)
         result = self._result("ok", posted, self.summary(posted, judge_text))

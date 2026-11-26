@@ -44,7 +44,8 @@
           "acceptance": 0.2,
           "outcomes": 10
         }
-      ]
+      ],
+      "min_severity": "major"
     }
   }
 }

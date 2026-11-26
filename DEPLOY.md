@@ -153,6 +153,10 @@ The criteria are in `docs/reviewer-v2-handoff.md` §8. In order:
 
 ## 10. Operating it
 
+- **What gets posted:** findings below `HABODEK_MIN_SEVERITY` (default `minor`, i.e.
+  everything) are held back; `HABODEK_REPO_POLICY` sets a floor and a comment budget
+  per project. Criticals are always posted. A re-review never repeats a finding an
+  open thread on the MR already raises.
 - **Acceptance and bars:** `docker compose … exec habodek habodek metrics --project <id>`
   or `GET /internal/metrics?project=<id>`. A category developers keep rejecting
   automatically posts only its more severe findings; the log says `bar raised`.

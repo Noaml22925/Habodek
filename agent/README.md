@@ -56,6 +56,8 @@ decides.
 | `HABODEK_MEMORY_DIR` | `data/memory` | the `habodek-memory` git repository (`none` disables memory) |
 | `HABODEK_MAX_CONSUMERS` | 5 | consumer repositories checked out for a library MR |
 | `HABODEK_MAP_DEBOUNCE_MIN` | 10 | how long a default-branch push waits before re-mapping |
+| `HABODEK_MIN_SEVERITY` | `minor` | findings below this are not posted (`critical`, `major`, `minor`) |
+| `HABODEK_REPO_POLICY` | | JSON per project path, e.g. `{"team/svc": {"min_severity": "major", "max_comments": 4}}` |
 | `HABODEK_BARS` | on | `off` disables automatic bar-raising |
 | `HABODEK_BAR_MIN_OUTCOMES`, `HABODEK_BAR_WINDOW` | 5, 50 | decided threads needed before a bar moves; recent posted findings per category considered |
 | `HABODEK_BAR_MAJOR_BELOW`, `HABODEK_BAR_CRITICAL_BELOW` | 0.5, 0.25 | acceptance below which a category posts only major+ / critical |
@@ -124,6 +126,14 @@ every root's commit, versions, prompt hashes, roles, memory commit), `events.jso
 traffic this service forwarded), `sandbox.jsonl`, `findings.json`, `metrics.json` and
 `result.json`. Worktrees are deleted after a job; `habodek-brain replay` and `probe`
 rebuild them from `run.json`. `habodek-brain trace show <dir>` writes `trace.html`.
+
+### What gets posted
+
+Only findings both verifiers upheld; none that an open thread on the MR already raises
+(matched by meaning, not only by id — the thread itself is re-checked instead); none
+below the repository's minimum severity. At most `HABODEK_MAX_COMMENTS` per review,
+but a **critical never counts against that budget**. The summary says what was held
+back and why.
 
 ### Acceptance and raised bars
 

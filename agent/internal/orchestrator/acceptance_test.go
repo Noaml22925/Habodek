@@ -116,3 +116,19 @@ func TestMetricsEndpoint(t *testing.T) {
 		t.Fatalf("missing project: %d", bad.StatusCode)
 	}
 }
+
+func TestRepositoryPostingPolicy(t *testing.T) {
+	r := newRig(t)
+	r.worker.Config.MinSeverity = "minor"
+	r.worker.Config.Repos = map[string]RepoPolicy{"group/project": {MinSeverity: "major", MaxComments: 2}}
+	r.webhook(t, "merge_request", labelEvent())
+	r.drain(t)
+	job := r.brain.jobs[0]
+	if job.MaxComments != 2 || job.Policy == nil || job.Policy.MinSeverity != "major" || len(job.Policy.Bars) != 0 {
+		t.Fatalf("job policy %+v max %d", job.Policy, job.MaxComments)
+	}
+	if r.worker.maxComments("other/project") != r.worker.Config.MaxComments ||
+		r.worker.minSeverity("other/project") != "minor" {
+		t.Fatal("an unlisted project takes the defaults")
+	}
+}

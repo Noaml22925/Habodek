@@ -61,6 +61,12 @@ func Build(cfg *config.Config) (*App, error) {
 	triggers := &orchestrator.Triggers{Store: store, WebhookSecret: cfg.GitLab.WebhookSecret,
 		BotUserID: cfg.GitLab.BotUserID, TriggerLabel: cfg.Review.TriggerLabel,
 		Debounce: time.Duration(cfg.Brain.ReplyDebounceSec) * time.Second}
+	worker.Config.MinSeverity = cfg.Posting.MinSeverity
+	worker.Config.Repos = map[string]orchestrator.RepoPolicy{}
+	for project, p := range cfg.Posting.Repos {
+		worker.Config.Repos[project] = orchestrator.RepoPolicy{MinSeverity: p.MinSeverity,
+			MaxComments: p.MaxComments}
+	}
 	worker.Config.Bars = orchestrator.BarConfig{Disabled: cfg.Bars.Disabled, Window: cfg.Bars.Window,
 		MinOutcomes: cfg.Bars.MinOutcomes, MajorBelow: cfg.Bars.MajorBelow,
 		CriticalBelow: cfg.Bars.CriticalBelow}

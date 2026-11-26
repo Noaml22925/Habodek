@@ -63,3 +63,28 @@ func TestPostgresNeedsADatabaseURL(t *testing.T) {
 		t.Fatalf("%v %+v", err, cfg.Store)
 	}
 }
+
+func TestPostingPolicyAndPathMap(t *testing.T) {
+	base(t)
+	t.Setenv("HABODEK_MIN_SEVERITY", "major")
+	t.Setenv("HABODEK_REPO_POLICY", `{"team/svc": {"min_severity": "critical", "max_comments": 3}}`)
+	t.Setenv("HABODEK_DOCKER_PATH_MAP", "/var/lib/habodek=/srv/habodek")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Posting.MinSeverity != "major" || cfg.Posting.Repos["team/svc"].MaxComments != 3 ||
+		cfg.Sandbox.PathMap["/var/lib/habodek"] != "/srv/habodek" {
+		t.Fatalf("%+v %+v", cfg.Posting, cfg.Sandbox.PathMap)
+	}
+	for key, bad := range map[string]string{"HABODEK_MIN_SEVERITY": "low",
+		"HABODEK_REPO_POLICY": `{"x": {"min_severity": "high"}}`, "HABODEK_DOCKER_PATH_MAP": "nope"} {
+		t.Run(key, func(t *testing.T) {
+			base(t)
+			t.Setenv(key, bad)
+			if _, err := Load(); err == nil {
+				t.Fatalf("%s=%s accepted", key, bad)
+			}
+		})
+	}
+}

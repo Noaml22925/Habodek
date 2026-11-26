@@ -6,6 +6,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -26,6 +27,20 @@ type Config struct {
 	Sandbox SandboxConfig
 	Memory  MemoryConfig
 	Bars    BarsConfig
+	Posting PostingConfig
+}
+
+// RepoPosting overrides the posting policy for one project (path_with_namespace).
+type RepoPosting struct {
+	MinSeverity string `json:"min_severity"`
+	MaxComments int    `json:"max_comments"`
+}
+
+// PostingConfig: what reaches GitLab (design §6.10). Criticals never count against
+// the comment budget.
+type PostingConfig struct {
+	MinSeverity string                 // critical | major | minor (default minor)
+	Repos       map[string]RepoPosting // HABODEK_REPO_POLICY, JSON keyed by project path
 }
 
 // BarsConfig: automatic bar-raising from acceptance (M11, design §6.10).
@@ -206,6 +221,20 @@ func Load() (*Config, error) {
 	cfg.Memory.MaxConsumers = envIntOrDefault("HABODEK_MAX_CONSUMERS", 5)
 	cfg.Memory.MapDebounce = envIntOrDefault("HABODEK_MAP_DEBOUNCE_MIN", 10)
 
+	cfg.Posting.MinSeverity = strings.ToLower(envOrDefault("HABODEK_MIN_SEVERITY", "minor"))
+	if !validSeverity(cfg.Posting.MinSeverity) {
+		return nil, fmt.Errorf("HABODEK_MIN_SEVERITY: %q is not critical, major or minor", cfg.Posting.MinSeverity)
+	}
+	if raw := os.Getenv("HABODEK_REPO_POLICY"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &cfg.Posting.Repos); err != nil {
+			return nil, fmt.Errorf("HABODEK_REPO_POLICY: %w", err)
+		}
+		for project, p := range cfg.Posting.Repos {
+			if p.MinSeverity != "" && !validSeverity(p.MinSeverity) {
+				return nil, fmt.Errorf("HABODEK_REPO_POLICY[%s]: min_severity %q", project, p.MinSeverity)
+			}
+		}
+	}
 	cfg.Bars.Disabled = strings.EqualFold(os.Getenv("HABODEK_BARS"), "off")
 	cfg.Bars.Window = envIntOrDefault("HABODEK_BAR_WINDOW", 50)
 	cfg.Bars.MinOutcomes = envIntOrDefault("HABODEK_BAR_MIN_OUTCOMES", 5)
@@ -238,6 +267,8 @@ func (c *Config) StoreDSN() (string, string) {
 	}
 	return "sqlite3", c.Store.SQLitePath
 }
+
+func validSeverity(s string) bool { return s == "critical" || s == "major" || s == "minor" }
 
 func envOrDefault(key, defaultVal string) string {
 	if v := os.Getenv(key); v != "" {

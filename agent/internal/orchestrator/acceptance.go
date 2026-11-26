@@ -146,15 +146,34 @@ func Bars(stats []Acceptance, cfg BarConfig) []brain.CategoryBar {
 	return bars
 }
 
-// policy for a review job, logged whenever a bar is raised.
+func (w *Worker) maxComments(projectPath string) int {
+	if p, ok := w.Config.Repos[projectPath]; ok && p.MaxComments > 0 {
+		return p.MaxComments
+	}
+	return w.Config.MaxComments
+}
+
+func (w *Worker) minSeverity(projectPath string) string {
+	if p, ok := w.Config.Repos[projectPath]; ok && p.MinSeverity != "" {
+		return p.MinSeverity
+	}
+	return w.Config.MinSeverity
+}
+
+// policy for a review job: the repository's posting floor and any raised bars (each
+// raise is logged). nil when it is the default (minor, no bars).
 func (w *Worker) policy(ctx context.Context, projectID int64, projectPath string) *brain.Policy {
+	floor := w.minSeverity(projectPath)
+	if floor == "minor" {
+		floor = ""
+	}
 	stats, err := w.Store.Acceptance(ctx, projectID, w.Config.Bars)
 	if err != nil {
 		slog.Warn("acceptance", "project", projectPath, "error", err)
-		return nil
+		stats = nil
 	}
 	bars := Bars(stats, w.Config.Bars)
-	if len(bars) == 0 {
+	if len(bars) == 0 && floor == "" {
 		return nil
 	}
 	for _, b := range bars {
@@ -162,7 +181,7 @@ func (w *Worker) policy(ctx context.Context, projectID int64, projectPath string
 			"acceptance", fmt.Sprintf("%.0f%%", b.Acceptance*100), "outcomes", b.Outcomes,
 			"posts", b.MinSeverity+"+")
 	}
-	return &brain.Policy{Bars: bars}
+	return &brain.Policy{Bars: bars, MinSeverity: floor}
 }
 
 // Report is a project's acceptance and the bars it raises (GET /internal/metrics).

@@ -72,6 +72,21 @@ after M6 and M7 settle it.
 
 **Progress log (newest first).**
 
+- **Posting policy (2026-11-26, after M12).** The two §6.10 rules M6 left out.
+  - **Open threads are not repeated.** Finders are told what the MR's open threads
+    already raise; before the judge, a verified finding that matches an open one is
+    held back (`dropped_at: open_thread`) — same id, or similar claim (token Jaccard)
+    in the same anchored file (≥ 0.3) or the same chain files (≥ 0.45), or very
+    similar anywhere (≥ 0.6). Its thread is re-checked by the thread agent instead.
+    The summary counts them. Before this, the brain received `open_findings` and
+    ignored them, so only an identical finding id was kept from posting twice.
+  - **Per-repository floor and budget.** `HABODEK_MIN_SEVERITY` (default `minor`:
+    unchanged behaviour) and `HABODEK_REPO_POLICY` (JSON per project: `min_severity`,
+    `max_comments`); review jobs carry `policy.min_severity`. **Criticals never count
+    against the comment budget** (the judge is told; code enforces it).
+  - Tests: S1 re-reviewed with F1 open posts nothing; S2 with F1 open still posts;
+    the floor; the budget; Go config validation and the per-repo job policy.
+
 - **M12 done (2026-11-26, branch `habodek-brain-rework`).** Offline delivery and the
   egress test. Everything is built on the VPN host from Artifactory (it proxies PyPI
   and Docker base images), so there is no bundle to carry but the repository.
@@ -887,10 +902,9 @@ replaced the design doc's R0-R6):
 **v2 (2026-11-26, after M12): the owner deploys and runs the acceptance test** —
 `HANDOFF.md`, then `DEPLOY.md` (probe, `docker/build.sh`, configure, start, webhook,
 first MR, §9 acceptance). Work only on branch `habodek-brain-rework`. Offline work
-that remains, in order: match existing threads by meaning before posting (the brain
-receives the MR's open findings but does not use them yet, so a reworded re-review
-can open a duplicate thread); a per-repository minimum severity and a comment budget
-criticals do not count against (design §6.10; today a flat cap of 6). Still outstanding with the
+that remains is optional: pre-mapping a configured list of consumer projects at
+start-up; better lesson matching (stemming or a shared code anchor); a metrics
+dashboard; C/C++ code intelligence (low priority, the owner's answer). Still outstanding with the
 owner, none blocking: the M1 gateway probe result, and the S1-S9 scorecard offer
 (`habodek-brain scorecard --scenarios 1-9 --runs 3`; with M9 it uses the local
 sandbox where `unshare` works, and says so in its header). Do not block on the

@@ -193,7 +193,11 @@ class CategoryBar(_Model):
 
 
 class Policy(_Model):
+    """The repository's posting policy (design §6.10), set by the control plane."""
+
     bars: list[CategoryBar] = Field(default_factory=list)
+    # Findings below this are not posted. Criticals never count against max_comments.
+    min_severity: Severity = "minor"
 
 
 class ReviewJob(_JobBase):

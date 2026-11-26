@@ -53,6 +53,16 @@ type WorkerConfig struct {
 	MaxAttempts  int
 	MaxConsumers int // other projects checked out for a library MR (default 5)
 	Bars         BarConfig
+	// MinSeverity is the default posting floor; Repos override it and MaxComments
+	// per project path.
+	MinSeverity string
+	Repos       map[string]RepoPolicy
+}
+
+// RepoPolicy overrides the posting policy for one project.
+type RepoPolicy struct {
+	MinSeverity string
+	MaxComments int
 }
 
 // Worker claims tasks from the store and runs them.
@@ -284,8 +294,8 @@ func (w *Worker) review(ctx context.Context, task *Task) error {
 	}
 	job := brain.Job{Kind: "review", JobID: task.ID, Priority: "review",
 		MR: w.mergeRequest(mr, task.ProjectID, task.ProjectPath), Revisions: prepared.Revisions,
-		Workspace: prepared.Workspace, MaxComments: w.Config.MaxComments, OpenFindings: openFindings,
-		Policy: w.policy(ctx, task.ProjectID, task.ProjectPath)}
+		Workspace: prepared.Workspace, MaxComments: w.maxComments(task.ProjectPath),
+		OpenFindings: openFindings, Policy: w.policy(ctx, task.ProjectID, task.ProjectPath)}
 	w.withMemory(ctx, &job)
 	result, err := w.Brain.Run(ctx, job)
 	if err != nil {

@@ -145,7 +145,8 @@ type CategoryBar struct {
 
 // Policy is the per-repository posting policy the control plane derives (M11).
 type Policy struct {
-	Bars []CategoryBar `json:"bars"`
+	Bars        []CategoryBar `json:"bars"`
+	MinSeverity string        `json:"min_severity,omitempty"` // below this nothing posts
 }
 
 // Envelope is the shape of job.json.
